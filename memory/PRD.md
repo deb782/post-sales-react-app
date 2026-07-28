@@ -86,7 +86,11 @@ users, user_sessions, projects, unit_types, units, payments, expenses, stock_ite
 - P2: Auto-expire reservations by cron (kept manual per spec)
 - P2: Vendor spend intelligence — click through to filtered expenses
 
+## Implemented (v6 — Feb 2026)
+- [x] **Database reset + admin seed for UAT** — `scripts/reset_and_seed.py` wipes all app collections and seeds a fresh admin (`sales@agrocorp.co.in`) with an auto-generated 14-char temp password (bcrypt, `must_reset_password=true`). Credentials stored in `/app/memory/test_credentials.md`.
+
 ## Next Tasks
-1. Email notifications via Resend (when user provides key)
-2. Auto-cron for reservation expiries (opt-in)
-3. Per-project revenue targets (monthly/quarterly) with variance dashboard tile
+1. User acceptance testing (in progress by user with fresh admin creds)
+2. Email-based approval buttons for Management (P2)
+3. Push/email notifications for pending approvals (P2)
+4. Modularise `server.py` into APIRouter modules (P2 refactor)
