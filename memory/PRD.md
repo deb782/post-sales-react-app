@@ -66,11 +66,17 @@ users, user_sessions, projects, unit_types, units, payments, expenses, stock_ite
 - [x] **Dashboard config API** (`/api/me/dashboard-config`) — persistence ready for widget picker + drag-drop UI (deferred to v5).
 - [x] Security fixes from testing agent: ObjectId leak + password_hash leak plugged.
 
+## Implemented (v5 — 28 Feb 2026)
+- [x] **Google Workspace SMTP live** — invites now actually email out via `smtp.gmail.com` (from `sales@agrocorp.co.in` / "Agrocorp Internal"). Delivery confirmed by testing agent on real Gmail send. Graceful fallback if provider rejects.
+- [x] **Dashboard drag-drop widget picker** — `@dnd-kit/sortable` powered popover; toggle any of 7 widgets on/off, drag to reorder, per-user persistence via `PATCH /api/me/dashboard-config`. Reset restores defaults.
+- [x] **Project image upload** — `POST /api/projects/{id}/image` uploads to Emergent object storage (public) and patches `project.image_url`. Edit dialog now includes a Cover Image row with file input + live preview; card thumbnails update immediately.
+- [x] Admin reset-password endpoint (`POST /api/users/{user_id}/reset-password`) — regenerates a temp password + optional email for locked-out users.
+
 ## Deferred / Backlog
-- P1: Dashboard widget picker UI (backend API already in place)
-- P1: Configure Google Workspace SMTP (needs App Password + SMTP_HOST=smtp.gmail.com, SMTP_USER=<workspace email>, SMTP_PASSWORD=<app pw>)
 - P2: Modularise server.py (currently 2200+ lines)
 - P2: TTL index on login_attempts collection
+- P2: DialogDescription for Radix a11y warning
+- P2: Bulk-CSV team roster import for Fortune-500 rollouts
 
 ## Deferred / Backlog
 - P2: Multi-tenant SaaS mode
