@@ -5,7 +5,7 @@ import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
   PieChart, Pie, Cell, LineChart, Line, Legend,
 } from "recharts";
-import { Building2, Home, IndianRupee, Receipt, TrendingUp, AlertCircle } from "lucide-react";
+import { Building2, Home, IndianRupee, Receipt, TrendingUp, AlertCircle, ArrowUp, ArrowDown, Minus } from "lucide-react";
 import { useProjectFilter } from "@/components/ProjectFilter";
 
 const COLORS = ["#064e3b", "#f59e0b", "#e11d48", "#78716c", "#3b82f6"];
@@ -130,6 +130,49 @@ export default function Dashboard() {
             </ResponsiveContainer>
           </div>
         </div>
+      </div>
+
+      {data.top_vendors && data.top_vendors.length > 0 && (
+        <div className="bg-white border border-stone-200 rounded-xl p-6 shadow-sm" data-testid="top-vendors">
+          <div className="flex items-baseline justify-between mb-4">
+            <div>
+              <div className="text-xs uppercase tracking-widest text-stone-500">Vendor spend intelligence</div>
+              <div className="text-lg font-semibold text-stone-900 mt-0.5">Top 5 vendors — this month vs. last</div>
+            </div>
+            <div className="text-xs text-stone-500">Approved expenses only</div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+            {data.top_vendors.map((v) => (
+              <VendorTile key={v.vendor} v={v} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function VendorTile({ v }) {
+  const delta = v.delta_pct;
+  const isNew = v.last_month === 0 && v.this_month > 0;
+  const arrow = delta === null || isNew ? Minus : delta > 0 ? ArrowUp : delta < 0 ? ArrowDown : Minus;
+  const Arrow = arrow;
+  const tone = isNew
+    ? "bg-blue-50 text-blue-700 border-blue-200"
+    : delta === null || delta === 0
+    ? "bg-stone-50 text-stone-600 border-stone-200"
+    : delta > 25
+    ? "bg-rose-50 text-rose-700 border-rose-200"
+    : delta > 0
+    ? "bg-amber-50 text-amber-800 border-amber-200"
+    : "bg-emerald-50 text-emerald-700 border-emerald-200";
+  return (
+    <div className="rounded-lg border border-stone-200 p-3 hover:border-stone-300 transition-colors">
+      <div className="text-xs text-stone-500 truncate" title={v.vendor}>{v.vendor}</div>
+      <div className="mt-1 text-lg font-semibold text-stone-900">₹{Math.round(v.this_month).toLocaleString("en-IN")}</div>
+      <div className={`mt-2 inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full border ${tone}`}>
+        <Arrow className="w-3 h-3" />
+        {isNew ? "New this month" : delta === null ? "—" : `${delta > 0 ? "+" : ""}${delta}% vs last`}
       </div>
     </div>
   );

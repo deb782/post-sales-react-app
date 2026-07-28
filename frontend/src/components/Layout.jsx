@@ -1,9 +1,10 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth, ROLE_LABELS } from "@/lib/auth";
+import { useBranding } from "@/lib/branding";
 import {
   LayoutDashboard, Building2, Home, Wallet, Receipt, Boxes,
   Users as UsersIcon, Upload, Settings as SettingsIcon,
-  ScrollText, LogOut, Bell,
+  ScrollText, LogOut,
 } from "lucide-react";
 import NotificationsBell from "@/components/NotificationsBell";
 import GlobalSearch from "@/components/GlobalSearch";
@@ -23,6 +24,7 @@ const NAV = [
 
 export default function Layout() {
   const { user, logout } = useAuth();
+  const { company_name, logo_url } = useBranding();
   const nav = useNavigate();
 
   const visible = NAV.filter((n) => n.roles.includes(user.role));
@@ -32,11 +34,15 @@ export default function Layout() {
       {/* Sidebar */}
       <aside className="w-64 shrink-0 bg-stone-900 text-white flex flex-col sticky top-0 h-screen">
         <div className="p-5 flex items-center gap-3 border-b border-stone-800">
-          <div className="w-9 h-9 rounded-md bg-emerald-500 flex items-center justify-center">
-            <Building2 className="w-5 h-5 text-stone-900" />
-          </div>
+          {logo_url ? (
+            <img src={logo_url} alt="logo" className="w-9 h-9 rounded-md bg-white object-contain p-0.5" />
+          ) : (
+            <div className="w-9 h-9 rounded-md bg-emerald-500 flex items-center justify-center">
+              <Building2 className="w-5 h-5 text-stone-900" />
+            </div>
+          )}
           <div>
-            <div className="font-semibold tracking-tight">Estate OS</div>
+            <div className="font-semibold tracking-tight">{company_name}</div>
             <div className="text-[10px] uppercase tracking-widest text-stone-400">Stakeholder Console</div>
           </div>
         </div>

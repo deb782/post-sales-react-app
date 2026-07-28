@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration-2 focused testing on new endpoints and UI: reserved workflow, bulk units, Excel exports, logo upload, public branding, top_vendors. Backend: wrote /app/backend/tests/backend_test_iter2.py — 19/19 tests passing (public settings, bulk create with pad+skip+cap+RBAC, reserve/release/sell-clears-reservation/reserve-sold-400/RBAC, all 4 exports, logo upload+public download+admin-only, top_vendors shape). Frontend: verified with seeded admin session — login shows updated TestCo branding + red logo, sidebar shows company+logo, Units page Export dropdown lists Excel & PDF, Bulk Create dialog opens with all inputs, Dashboard top-vendors tile renders after seeding 2 approved expenses, Settings logo file input + preview present. Expenses & Revenue pages both expose Export button.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/units/bulk", "issue": "Cap check is `end - start > 500` which allows 501 units per call (off-by-one from the stated 500-unit cap). Change to `end - start + 1 > 500`."},
+      {"endpoint": "POST /api/units/{id}/reserve", "issue": "Endpoint accepts status 'reserved' as valid pre-condition (per spec), so an already-reserved unit can be re-reserved (overwrites buyer/until). Spec says 'rejects if unit not available/reserved' which matches implementation — but this permits silently changing buyer. Consider requiring release first for clarity."},
+      {"endpoint": "GET /api/files/{file_id}/download", "issue": "For non-public files, expired-session check is missing (only checks session exists, not expires_at). Get_current_user handles it elsewhere but here it's inline auth."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Stock Book page (/stock)", "issue": "No Export button/dropdown rendered — spec required Excel export UI for Stock page. Backend /api/exports/stock works and returns xlsx; UI is missing the trigger.", "selector": "button:has-text('Export') on /stock", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Multiple pages with dialogs", "issues": ["Radix DialogContent components lack aria-describedby (console warnings on Bulk Create, Sell, Reserve dialogs). Add DialogDescription for a11y."]},
+      {"screen": "Dashboard", "issues": ["Recharts width(-1)/height(-1) warnings persist from iteration 1 despite minHeight — appears on first paint of hidden containers, harmless."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test_iter2.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/iter2_results.xml"
+  ],
+  "action_items": [
+    "Add Export dropdown (Excel + optional PDF) to /app/frontend/src/pages/Stock.jsx (or Stock Book file) wired to downloadExcel('/exports/stock', ...). Mirror pattern from Units.jsx.",
+    "Optional: fix off-by-one in bulk cap check (`end - start > 500` -> `end - start + 1 > 500`).",
+    "Optional: silence Radix DialogContent aria-describedby warnings by adding <DialogDescription> to Bulk/Sell/Reserve dialogs."
+  ],
+  "critical_code_review_comments": [
+    "download_file inline auth path does not verify expires_at like get_current_user does — an expired session_token would still allow non-public file download. Reuse get_current_user via Optional dep instead of inline logic.",
+    "bulk_create_units: `end - start > 500` allows 501-unit calls (fencepost). Fix to `end - start + 1 > 500`.",
+    "reserve_unit accepts status='reserved' so an admin can silently swap the buyer_name on an already-reserved unit without release audit trail. Consider enforcing release-then-reserve or capturing 'previous_buyer' in audit meta.",
+    "dashboard_summary now does a single async-for pass over expenses which is good — earlier double-iteration comment is resolved.",
+    "Stock export endpoint exists but Stock.jsx UI does not expose it — frontend/backend feature parity gap."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test_iter2.py (new)"
+  ],
+  "success_rate": {"backend": "100% (19/19 iter-2 tests + 28/28 iter-1 still valid)", "frontend": "~90% — Stock export button missing; all other new UI works"},
+  "test_credentials": "Reused admin user from iter-1 pytest seed. Fresh FE bearer token seeded: fetok_9c5d1fcfa8704105adc38a5efc69ac72 (admin, valid 7 days).",
+  "seed_data_creation": "iter-2 pytest seeds TEST2_-prefixed admin/accounts/site_manager users, one TEST2_Proj project, ~15 units (B-001..B-010 bulk + a few R-xxxx for reserve tests), 2 approved expenses (VendorAlpha ₹10k, VendorBeta ₹20k) this month for top_vendors, and 1 logo file record + settings.logo_file_id set to that file.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter-2 pytest module does NOT wipe DB (only iter-1 module fixture does). Running iter-1 backend_test.py again will re-wipe collections including seeded FE tokens — reseed via mongosh. Missing UI: Stock page Export button. If main agent adds it, re-run only the Stock page portion of the FE test.",
+  "rca of the issue": "Stock Book page missing Export UI — reviewed Stock.jsx (not viewed here but observed absence from live page probe: `button:has-text('Export')` on /stock returned None while /expenses and /revenue returned the button). Fix: mirror Units.jsx export dropdown (DropdownMenu + downloadExcel('/exports/stock', {project_id})) and place it in the header actions row."
+}

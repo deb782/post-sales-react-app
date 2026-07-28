@@ -2,6 +2,7 @@ import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider, useAuth } from "@/lib/auth";
+import { BrandingProvider } from "@/lib/branding";
 import Login from "@/pages/Login";
 import AuthCallback from "@/pages/AuthCallback";
 import Layout from "@/components/Layout";
@@ -50,11 +51,13 @@ function AppRouter() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <AppRouter />
-        <Toaster position="top-right" richColors />
-      </BrowserRouter>
-    </AuthProvider>
+    <BrandingProvider>
+      <AuthProvider>
+        <BrowserRouter>
+          <AppRouter />
+          <Toaster position="top-right" richColors />
+        </BrowserRouter>
+      </AuthProvider>
+    </BrandingProvider>
   );
 }

@@ -11,8 +11,12 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Wallet } from "lucide-react";
+import { Plus, Wallet, Download, FileSpreadsheet, FileText } from "lucide-react";
 import { toast } from "sonner";
+import { downloadExcel, downloadPdf } from "@/lib/exporters";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const fmt = (n = 0) => "₹" + Math.round(n).toLocaleString("en-IN");
 
@@ -64,6 +68,15 @@ export default function Revenue() {
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           <ProjectFilter />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" data-testid="export-payments-btn"><Download className="w-4 h-4 mr-1" /> Export</Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => downloadExcel("/exports/payments", projectId ? { project_id: projectId } : {}, "payments.xlsx")}><FileSpreadsheet className="w-4 h-4 mr-2" /> Excel (.xlsx)</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => downloadPdf("Payments", ["Date","Unit","Amount","Mode","Reference"], payments.map(p => [p.paid_on, unitLabel[p.unit_id] || "", fmt(p.amount), p.mode, p.reference || ""]), "payments.pdf")}><FileText className="w-4 h-4 mr-2" /> PDF</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           {can(user, "admin", "accounts") && (
             <Dialog open={open} onOpenChange={setOpen}>
               <DialogTrigger asChild>

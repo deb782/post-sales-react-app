@@ -1,4 +1,5 @@
 import { useAuth } from "@/lib/auth";
+import { useBranding } from "@/lib/branding";
 import { Building2, ShieldCheck, LineChart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useEffect } from "react";
@@ -7,6 +8,7 @@ import { useNavigate } from "react-router-dom";
 // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
 export default function Login() {
   const { user, loading } = useAuth();
+  const { company_name, logo_url } = useBranding();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -26,10 +28,14 @@ export default function Login() {
              style={{ backgroundImage: "url('https://images.pexels.com/photos/20273065/pexels-photo-20273065.jpeg')", backgroundSize: "cover", backgroundPosition: "center" }} />
         <div className="absolute inset-0 bg-gradient-to-tr from-stone-950 via-stone-900/70 to-transparent" />
         <div className="relative z-10 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-md bg-emerald-500 flex items-center justify-center">
-            <Building2 className="w-5 h-5 text-stone-900" />
-          </div>
-          <div className="text-sm uppercase tracking-widest text-stone-300">Estate OS</div>
+          {logo_url ? (
+            <img src={logo_url} alt="logo" className="w-10 h-10 rounded-md bg-white object-contain p-1" />
+          ) : (
+            <div className="w-10 h-10 rounded-md bg-emerald-500 flex items-center justify-center">
+              <Building2 className="w-5 h-5 text-stone-900" />
+            </div>
+          )}
+          <div className="text-sm uppercase tracking-widest text-stone-300">{company_name}</div>
         </div>
         <div className="relative z-10 max-w-xl">
           <h1 className="text-5xl xl:text-6xl font-extrabold tracking-tight leading-[1.05]">
@@ -44,7 +50,7 @@ export default function Login() {
             <Feature icon={<LineChart className="w-5 h-5" />} title="Live Analytics" body="Sales velocity, revenue vs. target, expense trends." />
           </div>
         </div>
-        <div className="relative z-10 text-xs text-stone-400">© {new Date().getFullYear()} Estate OS — internal build</div>
+        <div className="relative z-10 text-xs text-stone-400">© {new Date().getFullYear()} {company_name} — internal build</div>
       </div>
 
       {/* Right auth pane */}

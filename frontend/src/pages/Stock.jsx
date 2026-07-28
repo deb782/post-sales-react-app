@@ -11,8 +11,12 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Boxes, ArrowUp, ArrowDown } from "lucide-react";
+import { Plus, Boxes, ArrowUp, ArrowDown, Download, FileSpreadsheet, FileText } from "lucide-react";
 import { toast } from "sonner";
+import { downloadExcel, downloadPdf } from "@/lib/exporters";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 export default function Stock() {
   const { user } = useAuth();

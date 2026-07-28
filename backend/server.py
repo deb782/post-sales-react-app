@@ -175,6 +175,8 @@ class Unit(BaseModel):
     status: Literal["available", "reserved", "sold", "cancelled"] = "available"
     buyer_name: Optional[str] = None
     buyer_contact: Optional[str] = None
+    reserved_until: Optional[str] = None
+    reserved_at: Optional[str] = None
     sold_at: Optional[str] = None
     created_at: str = Field(default_factory=now)
 
@@ -190,6 +192,23 @@ class MarkSold(BaseModel):
     buyer_name: str
     buyer_contact: Optional[str] = ""
     total_price: Optional[float] = None
+
+
+class ReserveUnit(BaseModel):
+    buyer_name: str
+    buyer_contact: Optional[str] = ""
+    reserved_until: Optional[str] = None  # ISO date
+    total_price: Optional[float] = None
+
+
+class BulkUnitCreate(BaseModel):
+    project_id: str
+    unit_type_id: Optional[str] = None
+    prefix: str = ""
+    start: int
+    end: int
+    pad: int = 0            # zero-padding for numbers, 0 = none
+    base_price: float = 0
 
 
 class Payment(BaseModel):
@@ -293,6 +312,7 @@ class Settings(BaseModel):
     approval_threshold: float = 50000
     currency: str = "INR"
     company_name: str = "Estate OS"
+    logo_file_id: Optional[str] = None
     updated_at: str = Field(default_factory=now)
 
 
@@ -621,18 +641,85 @@ async def create_unit(payload: UnitCreate,
     return u.model_dump()
 
 
+@api.post("/units/bulk")
+async def bulk_create_units(payload: BulkUnitCreate,
+                            user: User = Depends(require_roles("admin"))):
+    if payload.end < payload.start:
+        raise HTTPException(400, "end must be >= start")
+    if payload.end - payload.start > 500:
+        raise HTTPException(400, "Bulk limit is 500 units per call")
+    existing = await db.units.find(
+        {"project_id": payload.project_id}, {"_id": 0, "unit_number": 1}
+    ).to_list(5000)
+    existing_nums = {u["unit_number"] for u in existing}
+
+    created: list[dict] = []
+    skipped: list[str] = []
+    for n in range(payload.start, payload.end + 1):
+        num = f"{payload.prefix}{str(n).zfill(payload.pad) if payload.pad else n}"
+        if num in existing_nums:
+            skipped.append(num)
+            continue
+        u = Unit(project_id=payload.project_id,
+                 unit_type_id=payload.unit_type_id,
+                 unit_number=num, price=payload.base_price)
+        await db.units.insert_one(u.model_dump())
+        created.append(u.model_dump())
+    await audit(user.user_id, "bulk_units", "unit", payload.project_id,
+                {"created": len(created), "skipped": len(skipped)})
+    return {"created": len(created), "skipped": skipped,
+            "units": created}
+
+
 @api.post("/units/{unit_id}/sell")
 async def mark_sold(unit_id: str, payload: MarkSold,
                     user: User = Depends(require_roles("admin"))):
     unit = await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
     if not unit:
         raise HTTPException(404, "Unit not found")
+    if unit["status"] == "sold":
+        raise HTTPException(400, "Unit already sold")
     upd = {"status": "sold", "buyer_name": payload.buyer_name,
-           "buyer_contact": payload.buyer_contact or "", "sold_at": now()}
+           "buyer_contact": payload.buyer_contact or "", "sold_at": now(),
+           "reserved_until": None, "reserved_at": None}
     if payload.total_price is not None:
         upd["price"] = payload.total_price
     await db.units.update_one({"unit_id": unit_id}, {"$set": upd})
     await audit(user.user_id, "sell_unit", "unit", unit_id, upd)
+    return await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
+
+
+@api.post("/units/{unit_id}/reserve")
+async def reserve_unit(unit_id: str, payload: ReserveUnit,
+                       user: User = Depends(require_roles("admin"))):
+    unit = await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
+    if not unit:
+        raise HTTPException(404, "Unit not found")
+    if unit["status"] not in ("available", "reserved"):
+        raise HTTPException(400, "Unit must be available to reserve")
+    upd = {"status": "reserved", "buyer_name": payload.buyer_name,
+           "buyer_contact": payload.buyer_contact or "",
+           "reserved_until": payload.reserved_until,
+           "reserved_at": now()}
+    if payload.total_price is not None:
+        upd["price"] = payload.total_price
+    await db.units.update_one({"unit_id": unit_id}, {"$set": upd})
+    await audit(user.user_id, "reserve_unit", "unit", unit_id, upd)
+    return await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
+
+
+@api.post("/units/{unit_id}/release")
+async def release_unit(unit_id: str,
+                       user: User = Depends(require_roles("admin"))):
+    unit = await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
+    if not unit:
+        raise HTTPException(404, "Unit not found")
+    if unit["status"] != "reserved":
+        raise HTTPException(400, "Only reserved units can be released")
+    upd = {"status": "available", "buyer_name": None, "buyer_contact": None,
+           "reserved_until": None, "reserved_at": None}
+    await db.units.update_one({"unit_id": unit_id}, {"$set": upd})
+    await audit(user.user_id, "release_unit", "unit", unit_id, {})
     return await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
 
 
@@ -896,6 +983,17 @@ async def list_movements(item_id: Optional[str] = None,
 
 
 # ------------------------------------------------------ settings -----------
+@api.get("/settings/public")
+async def public_settings():
+    """Non-sensitive settings visible before login (branding)."""
+    s = await get_settings_doc()
+    return {
+        "company_name": s.company_name,
+        "currency": s.currency,
+        "logo_file_id": s.logo_file_id,
+    }
+
+
 @api.get("/settings")
 async def read_settings(user: User = Depends(get_current_user)):
     s = await get_settings_doc()
@@ -906,6 +1004,7 @@ class SettingsUpdate(BaseModel):
     approval_threshold: Optional[float] = None
     currency: Optional[str] = None
     company_name: Optional[str] = None
+    logo_file_id: Optional[str] = None
 
 
 @api.patch("/settings")
@@ -976,16 +1075,59 @@ async def upload_file(file: UploadFile = File(...),
 
 @api.get("/files/{file_id}/download")
 async def download_file(file_id: str,
-                        user: User = Depends(get_current_user)):
+                        authorization: Optional[str] = Header(None),
+                        session_token: Optional[str] = Cookie(None),
+                        auth: Optional[str] = Query(None)):
+    # Allow logo (public) via public flag on file record; else require auth
     rec = await db.files.find_one({"file_id": file_id, "is_deleted": False},
                                   {"_id": 0})
     if not rec:
         raise HTTPException(404, "File not found")
+    if not rec.get("is_public"):
+        # authenticate: cookie, Bearer, or ?auth= query param
+        token = session_token
+        if not token and authorization and authorization.startswith("Bearer "):
+            token = authorization.split(" ", 1)[1]
+        if not token and auth:
+            token = auth
+        if not token:
+            raise HTTPException(401, "Not authenticated")
+        sess = await db.user_sessions.find_one({"session_token": token},
+                                               {"_id": 0})
+        if not sess:
+            raise HTTPException(401, "Invalid session")
     data, ct = get_object(rec["storage_path"])
     return Response(content=data,
                     media_type=rec.get("content_type") or ct,
                     headers={"Content-Disposition":
                              f'inline; filename="{rec["original_filename"]}"'})
+
+
+@api.post("/files/logo")
+async def upload_logo(file: UploadFile = File(...),
+                      user: User = Depends(require_roles("admin"))):
+    data = await file.read()
+    ext = (file.filename or "png").split(".")[-1].lower()
+    file_id = new_id("file")
+    path = f"{APP_NAME}/branding/{file_id}.{ext}"
+    result = put_object(path, data, file.content_type or "image/png")
+    doc = {
+        "file_id": file_id, "storage_path": result["path"],
+        "original_filename": file.filename,
+        "content_type": file.content_type,
+        "size": result.get("size", len(data)),
+        "uploaded_by": user.user_id, "is_deleted": False, "is_public": True,
+        "created_at": now(),
+    }
+    await db.files.insert_one(doc)
+    await db.settings.update_one({"_id": "singleton"},
+                                 {"$set": {"logo_file_id": file_id,
+                                           "updated_at": now()}},
+                                 upsert=True)
+    await audit(user.user_id, "upload_logo", "settings", "singleton",
+                {"file_id": file_id})
+    doc.pop("_id", None)
+    return doc
 
 
 # ------------------------------------------------------ analytics ---------
@@ -1035,18 +1177,39 @@ async def dashboard_summary(project_id: Optional[str] = None,
         {**exp_q, "status": "rejected"})
 
     approved_amt = 0.0
+    # single pass for both approved_amt, trend and vendor spend
+    from collections import defaultdict
+    by_day: dict[str, float] = defaultdict(float)
+    vendor_now: dict[str, float] = defaultdict(float)
+    vendor_prev: dict[str, float] = defaultdict(float)
+    today = datetime.now(timezone.utc)
+    this_month = today.strftime("%Y-%m")
+    prev_dt = today.replace(day=1) - timedelta(days=1)
+    prev_month = prev_dt.strftime("%Y-%m")
+
     async for e in db.expenses.find({**exp_q, "status": "final_approved"},
                                     {"_id": 0}):
         approved_amt += e["amount"]
-
-    # expense trend last 30 days
-    from collections import defaultdict
-    by_day: dict[str, float] = defaultdict(float)
-    async for e in db.expenses.find({**exp_q, "status": "final_approved"},
-                                    {"_id": 0}):
         d = (e.get("final_at") or e["created_at"])[:10]
         by_day[d] += e["amount"]
+        mo = d[:7]
+        vendor = (e.get("vendor") or "Unknown").strip() or "Unknown"
+        if mo == this_month:
+            vendor_now[vendor] += e["amount"]
+        elif mo == prev_month:
+            vendor_prev[vendor] += e["amount"]
+
     trend = [{"date": d, "amount": v} for d, v in sorted(by_day.items())][-30:]
+
+    # top vendors this month vs last
+    vendors: list[dict] = []
+    for v, amt in sorted(vendor_now.items(), key=lambda x: -x[1])[:5]:
+        prev = vendor_prev.get(v, 0.0)
+        delta_pct = None if prev == 0 else round(((amt - prev) / prev) * 100, 1)
+        vendors.append({
+            "vendor": v, "this_month": amt, "last_month": prev,
+            "delta_pct": delta_pct,
+        })
 
     return {
         "units": {"total": total, "sold": sold, "available": available,
@@ -1057,6 +1220,7 @@ async def dashboard_summary(project_id: Optional[str] = None,
                      "approved": approved, "rejected": rejected,
                      "approved_amount": approved_amt},
         "expense_trend": trend,
+        "top_vendors": vendors,
         "projects_count": len(projects),
     }
 
@@ -1180,6 +1344,132 @@ async def excel_import(kind: str, file: UploadFile = File(...),
     await audit(user.user_id, "excel_import", kind, "-",
                 {"inserted": inserted, "errors": len(errors)})
     return {"inserted": inserted, "errors": errors}
+
+
+# ------------------------------------------------------ excel export ------
+def _rows_to_xlsx(sheet_name: str, headers: list[str],
+                  rows: list[list[Any]]) -> io.BytesIO:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = sheet_name[:31]
+    ws.append(headers)
+    for r in rows:
+        ws.append(r)
+    for col in ws.columns:
+        max_len = max((len(str(c.value)) if c.value is not None else 0)
+                      for c in col)
+        ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 40)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+@api.get("/exports/units")
+async def export_units(project_id: Optional[str] = None,
+                       user: User = Depends(get_current_user)):
+    q: dict = {}
+    scope = user_scope_projects(user)
+    if project_id:
+        q["project_id"] = project_id
+    elif scope is not None:
+        q["project_id"] = {"$in": scope}
+    units = await db.units.find(q, {"_id": 0}).to_list(5000)
+    proj = {p["project_id"]: p["name"] for p in
+            await db.projects.find({}, {"_id": 0}).to_list(1000)}
+    utypes = {u["unit_type_id"]: u["name"] for u in
+              await db.unit_types.find({}, {"_id": 0}).to_list(1000)}
+    headers = ["Unit #", "Project", "Type", "Price", "Status",
+               "Buyer", "Contact", "Reserved Until", "Sold At"]
+    rows = [[u["unit_number"], proj.get(u["project_id"], ""),
+             utypes.get(u.get("unit_type_id"), ""), u["price"], u["status"],
+             u.get("buyer_name") or "", u.get("buyer_contact") or "",
+             u.get("reserved_until") or "", u.get("sold_at") or ""]
+            for u in units]
+    buf = _rows_to_xlsx("units", headers, rows)
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="units.xlsx"'})
+
+
+@api.get("/exports/expenses")
+async def export_expenses(project_id: Optional[str] = None,
+                          user: User = Depends(get_current_user)):
+    q: dict = {}
+    scope = user_scope_projects(user)
+    if project_id:
+        q["project_id"] = project_id
+    elif scope is not None:
+        q["project_id"] = {"$in": scope}
+    exps = await db.expenses.find(q, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    proj = {p["project_id"]: p["name"] for p in
+            await db.projects.find({}, {"_id": 0}).to_list(1000)}
+    users_map = {u["user_id"]: u["name"] for u in
+                 await db.users.find({}, {"_id": 0}).to_list(1000)}
+    headers = ["Date", "Project", "Category", "Vendor", "Amount",
+               "Status", "Raised By", "Stage-1 By", "Final By",
+               "Rejection Reason", "Description"]
+    rows = [[e["created_at"][:10], proj.get(e["project_id"], ""),
+             e["category"], e.get("vendor") or "", e["amount"], e["status"],
+             users_map.get(e.get("raised_by"), ""),
+             users_map.get(e.get("stage1_by"), ""),
+             users_map.get(e.get("final_by"), ""),
+             e.get("rejection_reason") or "", e.get("description") or ""]
+            for e in exps]
+    buf = _rows_to_xlsx("expenses", headers, rows)
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="expenses.xlsx"'})
+
+
+@api.get("/exports/payments")
+async def export_payments(project_id: Optional[str] = None,
+                          user: User = Depends(get_current_user)):
+    q: dict = {}
+    scope = user_scope_projects(user)
+    if project_id:
+        q["project_id"] = project_id
+    elif scope is not None:
+        q["project_id"] = {"$in": scope}
+    pays = await db.payments.find(q, {"_id": 0}).sort("paid_on", -1).to_list(5000)
+    units_map = {u["unit_id"]: u["unit_number"] for u in
+                 await db.units.find({}, {"_id": 0}).to_list(5000)}
+    proj = {p["project_id"]: p["name"] for p in
+            await db.projects.find({}, {"_id": 0}).to_list(1000)}
+    headers = ["Date", "Project", "Unit", "Amount", "Mode", "Reference"]
+    rows = [[p["paid_on"], proj.get(p["project_id"], ""),
+             units_map.get(p["unit_id"], ""), p["amount"], p["mode"],
+             p.get("reference") or ""] for p in pays]
+    buf = _rows_to_xlsx("payments", headers, rows)
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="payments.xlsx"'})
+
+
+@api.get("/exports/stock")
+async def export_stock(project_id: Optional[str] = None,
+                       user: User = Depends(get_current_user)):
+    q: dict = {}
+    scope = user_scope_projects(user)
+    if project_id:
+        q["project_id"] = project_id
+    elif scope is not None:
+        q["project_id"] = {"$in": scope}
+    items = await db.stock_items.find(q, {"_id": 0}).to_list(5000)
+    proj = {p["project_id"]: p["name"] for p in
+            await db.projects.find({}, {"_id": 0}).to_list(1000)}
+    headers = ["Item", "Project", "Unit", "Opening", "Inward", "Outward",
+               "Closing", "Vendor"]
+    rows = []
+    for it in items:
+        closing = it.get("opening", 0) + it.get("inward", 0) - it.get("outward", 0)
+        rows.append([it["name"], proj.get(it["project_id"], ""), it["unit"],
+                     it.get("opening", 0), it.get("inward", 0),
+                     it.get("outward", 0), closing, it.get("vendor") or ""])
+    buf = _rows_to_xlsx("stock", headers, rows)
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="stock.xlsx"'})
 
 
 # ------------------------------------------------------ mount -------------

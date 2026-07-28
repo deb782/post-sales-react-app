@@ -12,8 +12,12 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Receipt, Check, X, Paperclip } from "lucide-react";
+import { Plus, Receipt, Check, X, Paperclip, Download, FileSpreadsheet, FileText } from "lucide-react";
 import { toast } from "sonner";
+import { downloadExcel, downloadPdf } from "@/lib/exporters";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const fmt = (n = 0) => "₹" + Math.round(n).toLocaleString("en-IN");
 
@@ -141,6 +145,15 @@ export default function Expenses() {
               <SelectItem value="rejected">Rejected</SelectItem>
             </SelectContent>
           </Select>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" data-testid="export-expenses-btn"><Download className="w-4 h-4 mr-1" /> Export</Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => downloadExcel("/exports/expenses", projectId ? { project_id: projectId } : {}, "expenses.xlsx")}><FileSpreadsheet className="w-4 h-4 mr-2" /> Excel (.xlsx)</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => downloadPdf("Expenses", ["Date","Project","Category","Vendor","Amount","Status"], items.map(e => [e.created_at.slice(0,10), projMap[e.project_id] || "", e.category, e.vendor || "", `₹${Number(e.amount).toLocaleString("en-IN")}`, e.status]), "expenses.pdf")}><FileText className="w-4 h-4 mr-2" /> PDF</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           {canRaise && (
             <Dialog open={open} onOpenChange={setOpen}>
               <DialogTrigger asChild>

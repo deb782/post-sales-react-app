@@ -30,7 +30,7 @@ export default function AuthCallback() {
         navigate("/login", { replace: true });
       }
     })();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // eslint-disable-next-line react-hooks/exhaustive-deps
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-stone-50">
