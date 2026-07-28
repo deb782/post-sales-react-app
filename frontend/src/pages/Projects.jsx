@@ -127,6 +127,32 @@ export default function Projects() {
                 </div>
                 <Input data-testid="project-name-input" placeholder="Project name *" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
                 <Input placeholder="Developer" value={form.developer} onChange={(e) => setForm({ ...form, developer: e.target.value })} />
+                {editing && (
+                  <div className="md:col-span-2 flex items-center gap-4 p-3 rounded-md border border-stone-200 bg-stone-50">
+                    <div className="w-24 h-16 rounded-md border border-stone-200 bg-white overflow-hidden flex items-center justify-center shrink-0">
+                      {form.image_url ? (
+                        <img
+                          src={form.image_url.startsWith("/api") ? `${API_BASE}${form.image_url.replace("/api", "")}` : form.image_url}
+                          alt=""
+                          className="w-full h-full object-cover"
+                          data-testid="project-image-preview"
+                        />
+                      ) : (
+                        <Building2 className="w-6 h-6 text-stone-300" />
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <label className="text-xs uppercase tracking-widest text-stone-500">Cover image</label>
+                      <input
+                        type="file" accept="image/*"
+                        onChange={(e) => uploadImage(editing.project_id, e.target.files?.[0])}
+                        className="mt-1 block text-sm text-stone-700 file:mr-3 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:bg-emerald-900 file:text-white hover:file:bg-emerald-800"
+                        data-testid="project-image-input"
+                      />
+                      <div className="text-[11px] text-stone-500 mt-1">JPG/PNG, ideally 1200×600. Uploaded to secure storage.</div>
+                    </div>
+                  </div>
+                )}
                 <Input placeholder="Location / Area" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
                 <Input placeholder="City" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} />
                 <Input placeholder="State" value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })} />
