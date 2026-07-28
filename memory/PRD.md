@@ -53,6 +53,13 @@ users, user_sessions, projects, unit_types, units, payments, expenses, stock_ite
 - [x] Vendor spend intelligence strip on Dashboard (top 5, this month vs last, delta %)
 - [x] Session expiry check on file downloads
 
+## Implemented (v3 — 28 Feb 2026)
+- [x] Per-project monthly/quarterly revenue targets (upsert by project+period)
+- [x] Revenue Targets section on Revenue page with bar chart (Target / Received / Accrued × 6 periods)
+- [x] Variance API `GET /api/revenue-targets/variance` — series with received & accrued variance + %
+- [x] Dashboard variance tiles — current month + current quarter with dual chips
+- [x] Role scoping + validation: period_key regex, amount ≥ 0, closed scope-leak
+
 ## Deferred / Backlog
 - P2: Multi-tenant SaaS mode
 - P2: Outbound email on approval events (Resend/SendGrid) — user chose to skip for now

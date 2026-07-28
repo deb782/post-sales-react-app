@@ -341,11 +341,23 @@ class RevenueTarget(BaseModel):
     created_at: str = Field(default_factory=now)
 
 
+import re
+_MONTHLY_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+_QUARTERLY_RE = re.compile(r"^\d{4}-Q[1-4]$")
+
+
 class RevenueTargetCreate(BaseModel):
     project_id: str
     period_type: PeriodType
     period_key: str
-    amount: float
+    amount: float = Field(ge=0)
+
+    def validate_period_key(self):
+        pat = _MONTHLY_RE if self.period_type == "monthly" else _QUARTERLY_RE
+        if not pat.match(self.period_key):
+            raise HTTPException(
+                400,
+                f"period_key must match {pat.pattern} for {self.period_type}")
 
 
 def period_key_of(iso_dt: str, kind: PeriodType) -> str:
@@ -868,17 +880,19 @@ async def revenue_summary(project_id: Optional[str] = None,
 
 
 # ------------------------------------------------------ revenue targets ---
-async def _compute_period_actuals(scope_pids: list[str],
+async def _compute_period_actuals(scope_pids: Optional[list[str]],
                                   period_type: PeriodType,
                                   keys: list[str]) -> dict[str, dict]:
     """
     Return {period_key: {received: X, accrued: Y}} across given projects.
-    - received = sum(payment.amount) where payment.project_id in scope
-      and payment.paid_on falls in that period.
-    - accrued = sum(unit.price) where unit.status=sold and unit.sold_at
-      falls in that period.
+    scope_pids semantics:
+      * None      → include ALL projects (no filter)
+      * []        → no visible projects → all zeros
+      * [ids...]  → limit to these projects
     """
     out: dict[str, dict] = {k: {"received": 0.0, "accrued": 0.0} for k in keys}
+    if scope_pids is not None and len(scope_pids) == 0:
+        return out
     key_set = set(keys)
 
     pay_q: dict = {}
@@ -903,13 +917,15 @@ async def _compute_period_actuals(scope_pids: list[str],
     return out
 
 
-async def _sum_targets(scope_pids: list[str],
+async def _sum_targets(scope_pids: Optional[list[str]],
                        period_type: PeriodType,
                        keys: list[str]) -> dict[str, float]:
+    totals: dict[str, float] = {k: 0.0 for k in keys}
+    if scope_pids is not None and len(scope_pids) == 0:
+        return totals
     q: dict = {"period_type": period_type, "period_key": {"$in": keys}}
     if scope_pids:
         q["project_id"] = {"$in": scope_pids}
-    totals: dict[str, float] = {k: 0.0 for k in keys}
     async for t in db.revenue_targets.find(q, {"_id": 0}):
         totals[t["period_key"]] = totals.get(t["period_key"], 0.0) + t["amount"]
     return totals
@@ -944,6 +960,7 @@ async def list_targets(project_id: Optional[str] = None,
 @api.post("/revenue-targets")
 async def upsert_target(payload: RevenueTargetCreate,
                         user: User = Depends(require_roles("admin"))):
+    payload.validate_period_key()
     if not await db.projects.find_one({"project_id": payload.project_id}):
         raise HTTPException(404, "Project not found")
     existing = await db.revenue_targets.find_one({
@@ -984,12 +1001,11 @@ async def target_variance(project_id: Optional[str] = None,
                           user: User = Depends(get_current_user)):
     periods = max(1, min(24, periods))
     scope = _resolve_scope(user, project_id)
-    # convert None (all visible) to actual list by expanding
+    # Preserve None → all-projects; [] → no-access; concrete list → scope
     if scope is None:
-        all_projs = await db.projects.find({}, {"_id": 0, "project_id": 1}).to_list(2000)
-        pids = [p["project_id"] for p in all_projs]
+        pids = None
     else:
-        pids = scope
+        pids = scope  # may be []
     keys = prior_period_keys(period_type, periods)
     targets = await _sum_targets(pids, period_type, keys)
     actuals = await _compute_period_actuals(pids, period_type, keys)
