@@ -646,7 +646,7 @@ async def bulk_create_units(payload: BulkUnitCreate,
                             user: User = Depends(require_roles("admin"))):
     if payload.end < payload.start:
         raise HTTPException(400, "end must be >= start")
-    if payload.end - payload.start > 500:
+    if payload.end - payload.start + 1 > 500:
         raise HTTPException(400, "Bulk limit is 500 units per call")
     existing = await db.units.find(
         {"project_id": payload.project_id}, {"_id": 0, "unit_number": 1}
@@ -1096,6 +1096,13 @@ async def download_file(file_id: str,
                                                {"_id": 0})
         if not sess:
             raise HTTPException(401, "Invalid session")
+        exp = sess["expires_at"]
+        if isinstance(exp, str):
+            exp = datetime.fromisoformat(exp)
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if exp < datetime.now(timezone.utc):
+            raise HTTPException(401, "Session expired")
     data, ct = get_object(rec["storage_path"])
     return Response(content=data,
                     media_type=rec.get("content_type") or ct,

@@ -44,18 +44,24 @@ users, user_sessions, projects, unit_types, units, payments, expenses, stock_ite
 - [x] Object storage for receipts
 - [x] RBAC middleware + role-aware sidebar
 
+## Implemented (v2 — 28 Feb 2026 continued)
+- [x] Reserved unit workflow (Admin reserves with buyer + expiry, manual release)
+- [x] Bulk unit creator (prefix + start/end + zero-padding + base price, 500-unit cap)
+- [x] Excel + PDF export on Units, Expenses, Payments, Stock Book tables (server xlsx, client jsPDF)
+- [x] Company logo upload (Admin) — surfaced on sidebar + login
+- [x] Public branding endpoint `/api/settings/public` for pre-login logo
+- [x] Vendor spend intelligence strip on Dashboard (top 5, this month vs last, delta %)
+- [x] Session expiry check on file downloads
+
 ## Deferred / Backlog
-- P1: Excel export for tables (currently only import + template)
-- P1: Bulk unit creation UI (per project, quick generator)
-- P1: Reserved-status flow (currently only available/sold/cancelled toggles via mark-sold)
 - P2: Multi-tenant SaaS mode
-- P2: Outbound email on approval events (Resend/SendGrid)
-- P2: Company branding / logo upload in Settings
-- P2: PDF export of receipt-bearing expense records
+- P2: Outbound email on approval events (Resend/SendGrid) — user chose to skip for now
+- P2: PDF export of receipt-bearing expense records (currently only tabular PDF)
 - P2: Revenue targets per project period (quarterly/monthly)
-- P2: Site Manager scope for stock items shown in dashboard
+- P2: Auto-expire reservations by cron (kept manual per spec)
+- P2: Vendor spend intelligence — click through to filtered expenses
 
 ## Next Tasks
-1. Excel export from Units, Expenses, Payments tables
-2. Company logo upload in Settings + surface across sidebar/login
-3. Email notifications for approvals (Resend)
+1. Email notifications via Resend (when user provides key)
+2. Auto-cron for reservation expiries (opt-in)
+3. Per-project revenue targets (monthly/quarterly) with variance dashboard tile

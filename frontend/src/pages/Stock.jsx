@@ -68,6 +68,15 @@ export default function Stock() {
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           <ProjectFilter />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" data-testid="export-stock-btn"><Download className="w-4 h-4 mr-1" /> Export</Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => downloadExcel("/exports/stock", projectId ? { project_id: projectId } : {}, "stock.xlsx")}><FileSpreadsheet className="w-4 h-4 mr-2" /> Excel (.xlsx)</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => downloadPdf("Stock Book", ["Item","Project","Unit","Opening","Inward","Outward","Closing","Vendor"], items.map(it => [it.name, projMap[it.project_id] || "", it.unit, it.opening, it.inward, it.outward, it.closing, it.vendor || ""]), "stock.pdf")}><FileText className="w-4 h-4 mr-2" /> PDF</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           {can(user, "admin", "site_manager") && (
             <Dialog open={open} onOpenChange={setOpen}>
               <DialogTrigger asChild>
