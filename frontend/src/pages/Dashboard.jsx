@@ -7,6 +7,7 @@ import {
 } from "recharts";
 import { Building2, Home, IndianRupee, Receipt, TrendingUp, AlertCircle, ArrowUp, ArrowDown, Minus } from "lucide-react";
 import { useProjectFilter } from "@/components/ProjectFilter";
+import { Shareable } from "@/components/Shareable";
 
 const COLORS = ["#064e3b", "#f59e0b", "#e11d48", "#78716c", "#3b82f6"];
 
@@ -140,7 +141,8 @@ export default function Dashboard() {
       </div>
 
       {data.top_vendors && data.top_vendors.length > 0 && (
-        <div className="bg-white border border-stone-200 rounded-xl p-6 shadow-sm" data-testid="top-vendors">
+        <Shareable filename="vendor-spend.png" testId="share-vendors">
+          <div className="bg-white border border-stone-200 rounded-xl p-6 shadow-sm" data-testid="top-vendors">
           <div className="flex items-baseline justify-between mb-4">
             <div>
               <div className="text-xs uppercase tracking-widest text-stone-500">Vendor spend intelligence</div>
@@ -153,7 +155,8 @@ export default function Dashboard() {
               <VendorTile key={v.vendor} v={v} />
             ))}
           </div>
-        </div>
+          </div>
+        </Shareable>
       )}
     </div>
   );

@@ -22,6 +22,7 @@ export default function Users() {
   const [projects, setProjects] = useState([]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ email: "", name: "", role: "site_manager", project_ids: [] });
+  const [lastInvite, setLastInvite] = useState(null);
 
   const load = async () => {
     const [u, p] = await Promise.all([api.get("/users"), api.get("/projects")]);
@@ -32,9 +33,10 @@ export default function Users() {
 
   const save = async () => {
     try {
-      await api.post("/users", form);
-      toast.success("User added");
-      setOpen(false); setForm({ email: "", name: "", role: "site_manager", project_ids: [] });
+      const { data } = await api.post("/users", form);
+      toast.success(`Invited ${data.user.name}${data.email_sent ? " — email sent" : ""}`);
+      setLastInvite(data);
+      setForm({ email: "", name: "", role: "site_manager", project_ids: [] });
       load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
   };
@@ -106,6 +108,31 @@ export default function Users() {
           </DialogContent>
         </Dialog>
       </div>
+
+      {lastInvite && (
+        <div className="p-4 rounded-lg border border-emerald-200 bg-emerald-50" data-testid="last-invite-panel">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-semibold text-emerald-900">Invite ready for {lastInvite.user.name}</div>
+              <div className="mt-1 text-xs text-stone-700 space-y-0.5 font-mono">
+                <div>Portal: {lastInvite.login_url}</div>
+                <div>Login ID: {lastInvite.user.email}</div>
+                <div>Temp password: {lastInvite.temp_password}</div>
+              </div>
+              {!lastInvite.email_sent && (
+                <div className="mt-2 text-[11px] text-amber-800">SMTP not configured — please share these details manually.</div>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={() => {
+                navigator.clipboard.writeText(`Portal: ${lastInvite.login_url}\nLogin ID: ${lastInvite.user.email}\nTemporary password: ${lastInvite.temp_password}`);
+                toast.success("Copied");
+              }}>Copy</Button>
+              <Button size="sm" variant="outline" onClick={() => setLastInvite(null)}>Dismiss</Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="bg-white border border-stone-200 rounded-xl">
         <Table>

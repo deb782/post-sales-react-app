@@ -1,10 +1,12 @@
 import "@/App.css";
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { BrandingProvider } from "@/lib/branding";
+import { OnboardingProvider, useOnboarding } from "@/lib/onboarding";
 import Login from "@/pages/Login";
-import AuthCallback from "@/pages/AuthCallback";
+import ResetPassword from "@/pages/ResetPassword";
+import Onboarding from "@/pages/Onboarding";
 import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import Projects from "@/pages/Projects";
@@ -21,18 +23,30 @@ function Protected({ children, roles }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="p-8 text-stone-500">Loading…</div>;
   if (!user) return <Navigate to="/login" replace />;
+  if (user.must_reset_password) return <Navigate to="/reset-password" replace />;
   if (roles && !roles.includes(user.role)) return <Navigate to="/dashboard" replace />;
   return children;
 }
 
+function OnboardGate({ children }) {
+  const { user } = useAuth();
+  const { status, loading } = useOnboarding();
+  if (loading) return <div className="p-8 text-stone-500">Loading…</div>;
+  // Admin must complete onboarding before rest of the app opens up.
+  if (user.role === "admin" && !user.onboarding_completed && !status?.system_ready) {
+    return <Navigate to="/onboarding" replace />;
+  }
+  return children;
+}
+
 function AppRouter() {
-  const location = useLocation();
-  if (location.hash?.includes("session_id=")) return <AuthCallback />;
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/reset-password" element={<Protected roles={undefined}><ResetPassword /></Protected>} />
+      <Route path="/onboarding" element={<Protected roles={["admin"]}><Onboarding /></Protected>} />
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
-      <Route element={<Protected><Layout /></Protected>}>
+      <Route element={<Protected><OnboardGate><Layout /></OnboardGate></Protected>}>
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/projects" element={<Projects />} />
         <Route path="/units" element={<Units />} />
@@ -53,10 +67,12 @@ export default function App() {
   return (
     <BrandingProvider>
       <AuthProvider>
-        <BrowserRouter>
-          <AppRouter />
-          <Toaster position="top-right" richColors />
-        </BrowserRouter>
+        <OnboardingProvider>
+          <BrowserRouter>
+            <AppRouter />
+            <Toaster position="top-right" richColors />
+          </BrowserRouter>
+        </OnboardingProvider>
       </AuthProvider>
     </BrandingProvider>
   );

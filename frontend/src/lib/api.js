@@ -9,7 +9,7 @@ export const api = axios.create({
 });
 
 api.interceptors.request.use((cfg) => {
-  const token = localStorage.getItem("session_token");
+  const token = localStorage.getItem("access_token");
   if (token) cfg.headers.Authorization = `Bearer ${token}`;
   return cfg;
 });
@@ -18,7 +18,7 @@ api.interceptors.response.use(
   (r) => r,
   (err) => {
     if (err?.response?.status === 401) {
-      localStorage.removeItem("session_token");
+      localStorage.removeItem("access_token");
       if (!window.location.pathname.startsWith("/login")) {
         window.location.href = "/login";
       }
@@ -26,3 +26,12 @@ api.interceptors.response.use(
     return Promise.reject(err);
   }
 );
+
+/** Turn any FastAPI error payload into a printable string. */
+export function apiError(e, fallback = "Something went wrong") {
+  const d = e?.response?.data?.detail;
+  if (!d) return e?.message || fallback;
+  if (typeof d === "string") return d;
+  if (Array.isArray(d)) return d.map(x => x?.msg || JSON.stringify(x)).join(" • ");
+  return d?.msg || JSON.stringify(d);
+}

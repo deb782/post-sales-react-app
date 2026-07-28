@@ -1,0 +1,51 @@
+{
+  "summary": "Iteration 5 backend testing for hard cut-over from Emergent Google OAuth to password auth (JWT+bcrypt). Rebuilt tests from scratch (old iter1-4 tests removed). 21/21 tests pass after fixing 2 real production bugs in the backend. Covered: seed-admin login, JWT/cookie issuance, /auth/me, brute-force lockout (429 after 5 fails), change-password (strength rules + must_reset toggle), onboarding status+complete, 5 project types schema, project create/patch with extended fields, xlsx template + xlsx & csv bulk import (with error row handling), user invite -> temp password -> first-login change-password, dashboard-config GET/PATCH, site_manager RBAC scope on /units, and regression on expenses two-stage approval, revenue-targets, exports, dashboard summary.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/users", "issue": "500 Internal Server Error caused by MongoDB ObjectId `_id` leaking into response. `doc = u.model_dump(); await db.users.insert_one(doc)` mutates doc to inject `_id`, then FastAPI serialization crashes with `TypeError: 'ObjectId' object is not iterable`. FIXED by adding `doc.pop('_id', None)` before returning.", "priority": "CRITICAL"},
+      {"endpoint": "PATCH /api/users/{id}", "issue": "Security bug: `password_hash` was returned in the response body (bcrypt hash leaked to admin UI). FIXED by adding password_hash exclusion to find_one projection.", "priority": "HIGH"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/backend_test_iter5.py",
+    "/app/test_reports/pytest/iter5.xml"
+  ],
+  "action_items": [
+    "Two production bugs were fixed directly in server.py (see updated_files). Please review the fixes.",
+    "Consider centralising the User serialization (a single helper `serialize_user(doc)` that pops both `_id` and `password_hash`) to prevent recurrence — several endpoints project these fields ad-hoc.",
+    "Login endpoint returns cookie with SameSite=None + Secure (correct for cross-site preview). Frontend must send `credentials: 'include'` on fetch calls."
+  ],
+  "critical_code_review_comments": [
+    "server.py has grown to 2172 lines — consider splitting into modules (auth, projects, units, expenses, onboarding, exports).",
+    "POST /projects and PATCH /projects/{id} both accept ProjectCreate (PATCH is thus non-partial: caller must resend all fields or defaults will overwrite). Consider a ProjectUpdate model with all Optional fields for true partial patches.",
+    "Login rate-limiter (`db.login_attempts`) never expires the lock document; after 15 min the code correctly ignores the stale `locked_until`, but the doc stays with `count>=5` forever. On success `delete_one` runs but on continued failure new counts keep incrementing. Consider a TTL index or reset window.",
+    "`get_dash_config` reads `user.dashboard_config` from the User model but the model type is `Optional[dict]` and it's only refreshed via /auth/me — a PATCH followed by GET works only because `get_current_user` re-queries the DB every request (which is good but expensive).",
+    "`gen_temp_password` produces 12 chars with guaranteed upper/lower/digit/symbol — matches strength rule (min 10). Good.",
+    "Onboarding `has_units` only counts globally (`db.units.count_documents({})`); if all units belong to a soon-to-be-deleted project, the flag stays true. Fine for MVP but worth noting."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (fixed create_user response and update_user response — 2 lines)",
+    "/app/backend/tests/backend_test_iter5.py (new — 21 tests, replaces obsolete iter1-4 suites)",
+    "Removed obsolete: /app/backend/tests/backend_test.py, backend_test_iter2.py, backend_test_iter3.py, backend_test_iter4_auth.py (all hit /auth/session which no longer exists)"
+  ],
+  "success_rate": {"backend": "100% (21/21 after fixes)", "frontend": "not tested (backend-only iteration)"},
+  "test_credentials": "Seeded admin admin@vistaestates.com / Vista@Admin#2026. Test users created with prefix TEST_ / random uuid suffix so cleanup is trivial.",
+  "seed_data_creation": "Tests create ephemeral projects (TEST_Plot_*, TEST_Res_*, TEST_SMOwn_*, TEST_SMOther_*, TEST_Reg_*), users (test5_*, chpw_*, upd_*, sm_*) and units within them. No admin data was mutated except that /onboarding/complete flipped admin.onboarding_completed=true (which is idempotent and expected).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend is solid after this iteration. The seed admin still has must_reset_password=true — do NOT rely on that being flipped by this suite (it wasn't; only onboarding_completed was set). If you need to test the admin change-password path, either (a) use a freshly seeded admin (delete users.find_one({email:ADMIN_EMAIL}) and restart backend to auto-seed) or (b) invite a new user and test change-password on them (that's what TestChangePasswordFlow already does). Brute-force lockout writes to db.login_attempts — delete that collection if you need a clean slate.",
+  "rca of the issue": {
+    "bug_1_create_user_500": {
+      "reproduction": "POST /api/users with any valid admin body -> 500",
+      "rca": "line 800: `doc = u.model_dump(); await db.users.insert_one(doc)`. motor injects an ObjectId at doc['_id'] after insert. The endpoint then returns `doc` inside a JSON response and FastAPI's jsonable_encoder cannot serialize ObjectId, raising ValueError.",
+      "fix_applied": "Added `doc.pop('_id', None)` alongside the existing `doc.pop('password_hash', None)` before returning."
+    },
+    "bug_2_patch_user_leaks_hash": {
+      "reproduction": "As admin, PATCH /api/users/{id} with any field -> response body contains password_hash (bcrypt).",
+      "rca": "line 825 fetched with projection `{_id: 0}` only — did not exclude password_hash.",
+      "fix_applied": "Changed projection to `{_id: 0, password_hash: 0}`."
+    }
+  }
+}

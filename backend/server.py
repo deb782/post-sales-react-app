@@ -1,25 +1,33 @@
 """
 Real Estate Stakeholder Dashboard — FastAPI backend.
 
-Modules: auth (Emergent Google), users, projects, unit_types, units, payments,
-expenses (2-stage approval), stock (items + movements), audit log, settings,
-excel import/export, dashboard analytics, notifications, files.
+Modules: auth (password + JWT + bcrypt), users, projects, unit_types, units,
+payments, expenses (2-stage approval), stock (items + movements), audit log,
+settings, excel import/export, dashboard analytics, notifications, files,
+revenue targets, onboarding.
 """
 from __future__ import annotations
 
 import io
 import os
+import re
+import csv
 import uuid
+import secrets
 import logging
+import smtplib
+from email.message import EmailMessage
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Literal, Any
 
+import jwt
+import bcrypt
 import requests
 from dotenv import load_dotenv
 from fastapi import (
     FastAPI, APIRouter, HTTPException, Depends, Header, Query, Response,
-    UploadFile, File, Form, Cookie,
+    UploadFile, File, Form, Cookie, Request,
 )
 from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
@@ -34,6 +42,12 @@ load_dotenv(ROOT_DIR / ".env")
 MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ["DB_NAME"]
 EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY")
+JWT_SECRET = os.environ["JWT_SECRET"]
+JWT_ALG = "HS256"
+ACCESS_TOKEN_TTL = timedelta(days=7)
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@vistaestates.com").lower()
+ADMIN_TEMP_PASSWORD = os.environ.get("ADMIN_TEMP_PASSWORD", "Vista@Admin#2026")
+APP_PUBLIC_URL = os.environ.get("APP_PUBLIC_URL", "")
 APP_NAME = "realestate-dashboard"
 
 client = AsyncIOMotorClient(MONGO_URL)
@@ -110,10 +124,15 @@ class User(BaseModel):
     user_id: str = Field(default_factory=lambda: new_id("user"))
     email: EmailStr
     name: str
+    phone: Optional[str] = None
     picture: Optional[str] = None
     role: Role = "site_manager"
     project_ids: List[str] = []
+    password_hash: Optional[str] = None
+    must_reset_password: bool = True
+    dashboard_config: Optional[dict] = None
     is_active: bool = True
+    onboarding_completed: bool = False
     created_at: str = Field(default_factory=now)
 
 
@@ -121,22 +140,51 @@ class UserCreate(BaseModel):
     email: EmailStr
     name: str
     role: Role
+    phone: Optional[str] = None
     project_ids: List[str] = []
 
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     role: Optional[Role] = None
+    phone: Optional[str] = None
     project_ids: Optional[List[str]] = None
     is_active: Optional[bool] = None
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class DashboardConfig(BaseModel):
+    widgets: List[str]  # ordered widget ids the user wants to see
+
+
+ProjectType = Literal["residential", "commercial", "plot", "villa", "mixed"]
 
 
 class Project(BaseModel):
     model_config = ConfigDict(extra="ignore")
     project_id: str = Field(default_factory=lambda: new_id("proj"))
     name: str
+    project_type: ProjectType = "residential"
     location: str = ""
+    address: str = ""
+    city: str = ""
+    state: str = ""
+    pincode: str = ""
     description: str = ""
+    developer: str = ""
+    rera_number: str = ""
+    start_date: Optional[str] = None
+    expected_completion: Optional[str] = None
+    total_units_planned: int = 0
     target_revenue: float = 0
     image_url: Optional[str] = None
     is_active: bool = True
@@ -145,8 +193,18 @@ class Project(BaseModel):
 
 class ProjectCreate(BaseModel):
     name: str
+    project_type: ProjectType = "residential"
     location: str = ""
+    address: str = ""
+    city: str = ""
+    state: str = ""
+    pincode: str = ""
     description: str = ""
+    developer: str = ""
+    rera_number: str = ""
+    start_date: Optional[str] = None
+    expected_completion: Optional[str] = None
+    total_units_planned: int = 0
     target_revenue: float = 0
     image_url: Optional[str] = None
 
@@ -178,6 +236,7 @@ class Unit(BaseModel):
     reserved_until: Optional[str] = None
     reserved_at: Optional[str] = None
     sold_at: Optional[str] = None
+    attributes: dict = Field(default_factory=dict)  # type-specific fields
     created_at: str = Field(default_factory=now)
 
 
@@ -186,6 +245,7 @@ class UnitCreate(BaseModel):
     unit_type_id: Optional[str] = None
     unit_number: str
     price: float = 0
+    attributes: dict = Field(default_factory=dict)
 
 
 class MarkSold(BaseModel):
@@ -341,7 +401,6 @@ class RevenueTarget(BaseModel):
     created_at: str = Field(default_factory=now)
 
 
-import re
 _MONTHLY_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 _QUARTERLY_RE = re.compile(r"^\d{4}-Q[1-4]$")
 
@@ -427,29 +486,70 @@ async def get_settings_doc() -> Settings:
 
 
 # ------------------------------------------------------------------ auth ---
+def hash_pw(pw: str) -> str:
+    return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
+
+
+def verify_pw(pw: str, h: str) -> bool:
+    try:
+        return bcrypt.checkpw(pw.encode(), h.encode())
+    except Exception:
+        return False
+
+
+def create_jwt(user_id: str, email: str) -> str:
+    payload = {
+        "sub": user_id, "email": email,
+        "exp": datetime.now(timezone.utc) + ACCESS_TOKEN_TTL,
+        "iat": datetime.now(timezone.utc),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+
+
+def gen_temp_password(length: int = 12) -> str:
+    """Generate a secure temp password: 3 upper + 3 lower + 3 digit + 3 symbol."""
+    upper = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+    lower = "abcdefghijkmnpqrstuvwxyz"
+    digit = "23456789"
+    symbol = "@#$%&*!"
+    parts = ([secrets.choice(upper) for _ in range(3)] +
+             [secrets.choice(lower) for _ in range(3)] +
+             [secrets.choice(digit) for _ in range(3)] +
+             [secrets.choice(symbol) for _ in range(3)])
+    secrets.SystemRandom().shuffle(parts)
+    return "".join(parts)
+
+
+_PW_RE = re.compile(r"^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[^\w\s]).{10,}$")
+
+
+def validate_password_strength(pw: str) -> None:
+    if not _PW_RE.match(pw):
+        raise HTTPException(
+            400,
+            "Password must be at least 10 characters and include upper case, "
+            "lower case, a digit and a symbol.",
+        )
+
+
 async def get_current_user(
+    request: Request,
     authorization: Optional[str] = Header(None),
-    session_token: Optional[str] = Cookie(None),
+    access_token: Optional[str] = Cookie(None),
 ) -> User:
-    token = session_token
+    token = access_token
     if not token and authorization and authorization.startswith("Bearer "):
         token = authorization.split(" ", 1)[1]
     if not token:
         raise HTTPException(401, "Not authenticated")
-
-    sess = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
-    if not sess:
-        raise HTTPException(401, "Invalid session")
-
-    exp = sess["expires_at"]
-    if isinstance(exp, str):
-        exp = datetime.fromisoformat(exp)
-    if exp.tzinfo is None:
-        exp = exp.replace(tzinfo=timezone.utc)
-    if exp < datetime.now(timezone.utc):
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+    except jwt.ExpiredSignatureError:
         raise HTTPException(401, "Session expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(401, "Invalid token")
 
-    user_doc = await db.users.find_one({"user_id": sess["user_id"]}, {"_id": 0})
+    user_doc = await db.users.find_one({"user_id": payload["sub"]}, {"_id": 0})
     if not user_doc or not user_doc.get("is_active", True):
         raise HTTPException(401, "User not found or inactive")
     return User(**user_doc)
@@ -470,96 +570,218 @@ def user_scope_projects(user: User) -> Optional[List[str]]:
     return user.project_ids or []
 
 
+# --------------------------------------- project-type inventory schemas ----
+TYPE_SCHEMAS: dict[str, dict[str, Any]] = {
+    "residential": {
+        "label": "Residential Apartments",
+        "description": "Multi-story residential — 1/2/3/4 BHK, penthouses, studios.",
+        "unit_types": ["Studio", "1BHK", "2BHK", "3BHK", "3.5BHK", "4BHK", "Penthouse"],
+        "fields": [
+            {"key": "tower", "label": "Tower / Wing", "type": "text"},
+            {"key": "floor", "label": "Floor", "type": "number"},
+            {"key": "bhk", "label": "Configuration (BHK)", "type": "text"},
+            {"key": "carpet_area_sqft", "label": "Carpet area (sqft)", "type": "number"},
+            {"key": "super_area_sqft", "label": "Super built-up area (sqft)", "type": "number"},
+            {"key": "facing", "label": "Facing", "type": "select",
+             "options": ["North","East","South","West","North-East","North-West","South-East","South-West"]},
+            {"key": "balconies", "label": "Balconies", "type": "number"},
+            {"key": "bathrooms", "label": "Bathrooms", "type": "number"},
+            {"key": "parking_slots", "label": "Parking slots", "type": "number"},
+        ],
+    },
+    "commercial": {
+        "label": "Commercial",
+        "description": "Offices, retail, showrooms, co-working, warehouses.",
+        "unit_types": ["Office", "Retail Shop", "Showroom", "Warehouse", "Co-working"],
+        "fields": [
+            {"key": "use_type", "label": "Use type", "type": "select",
+             "options": ["Office","Retail","Showroom","Warehouse","Co-working"]},
+            {"key": "floor", "label": "Floor", "type": "number"},
+            {"key": "carpet_area_sqft", "label": "Carpet area (sqft)", "type": "number"},
+            {"key": "chargeable_area_sqft", "label": "Chargeable area (sqft)", "type": "number"},
+            {"key": "frontage_ft", "label": "Frontage (ft)", "type": "number"},
+            {"key": "washrooms", "label": "Washrooms", "type": "number"},
+            {"key": "parking_slots", "label": "Parking slots", "type": "number"},
+        ],
+    },
+    "plot": {
+        "label": "Plots / Land",
+        "description": "Freehold residential or commercial plots.",
+        "unit_types": ["Residential Plot", "Commercial Plot", "Corner Plot"],
+        "fields": [
+            {"key": "area_sqft", "label": "Area (sqft)", "type": "number"},
+            {"key": "length_ft", "label": "Length (ft)", "type": "number"},
+            {"key": "width_ft", "label": "Width (ft)", "type": "number"},
+            {"key": "facing", "label": "Facing", "type": "select",
+             "options": ["North","East","South","West","North-East","North-West","South-East","South-West"]},
+            {"key": "corner", "label": "Corner plot", "type": "boolean"},
+            {"key": "road_width_ft", "label": "Road width (ft)", "type": "number"},
+        ],
+    },
+    "villa": {
+        "label": "Villas",
+        "description": "Standalone or gated-community villas.",
+        "unit_types": ["3BHK Villa", "4BHK Villa", "5BHK Villa", "Twin Villa"],
+        "fields": [
+            {"key": "plot_area_sqft", "label": "Plot area (sqft)", "type": "number"},
+            {"key": "builtup_area_sqft", "label": "Built-up area (sqft)", "type": "number"},
+            {"key": "bedrooms", "label": "Bedrooms", "type": "number"},
+            {"key": "bathrooms", "label": "Bathrooms", "type": "number"},
+            {"key": "floors", "label": "Floors", "type": "number"},
+            {"key": "facing", "label": "Facing", "type": "select",
+             "options": ["North","East","South","West","North-East","North-West","South-East","South-West"]},
+            {"key": "garden", "label": "Private garden", "type": "boolean"},
+            {"key": "swimming_pool", "label": "Swimming pool", "type": "boolean"},
+        ],
+    },
+    "mixed": {
+        "label": "Mixed-use",
+        "description": "Multiple asset types under one project.",
+        "unit_types": ["Apartment", "Office", "Retail", "Villa", "Plot", "Other"],
+        "fields": [
+            {"key": "category", "label": "Category", "type": "select",
+             "options": ["Apartment","Office","Retail","Villa","Plot","Other"]},
+            {"key": "carpet_area_sqft", "label": "Carpet area (sqft)", "type": "number"},
+            {"key": "floor", "label": "Floor", "type": "text"},
+            {"key": "notes", "label": "Notes", "type": "text"},
+        ],
+    },
+}
+
+
+# ---------------------------------------------------- email (SMTP) --------
+def _smtp_configured() -> bool:
+    return bool(os.environ.get("SMTP_HOST")
+                and os.environ.get("SMTP_USER")
+                and os.environ.get("SMTP_PASSWORD"))
+
+
+def send_email(to_email: str, subject: str, html_body: str,
+               text_body: Optional[str] = None) -> bool:
+    """Best-effort SMTP send. Returns True on success, False otherwise."""
+    if not _smtp_configured():
+        return False
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        from_name = os.environ.get("SMTP_FROM_NAME", "Vista Estates")
+        msg["From"] = f'{from_name} <{os.environ["SMTP_USER"]}>'
+        msg["To"] = to_email
+        msg.set_content(text_body or re.sub(r"<[^>]+>", "", html_body))
+        msg.add_alternative(html_body, subtype="html")
+        with smtplib.SMTP(os.environ["SMTP_HOST"],
+                          int(os.environ.get("SMTP_PORT", 587)),
+                          timeout=15) as s:
+            s.starttls()
+            s.login(os.environ["SMTP_USER"], os.environ["SMTP_PASSWORD"])
+            s.send_message(msg)
+        return True
+    except Exception as e:
+        log.warning("SMTP send failed: %s", e)
+        return False
+
+
+def invite_email_html(name: str, email: str, temp_pw: str,
+                      login_url: str) -> str:
+    return f"""
+    <div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:560px;margin:auto;color:#1c1917">
+      <h2 style="color:#064e3b;margin:0 0 12px">You've been invited to Vista Estates</h2>
+      <p>Hi {name},</p>
+      <p>An account has been created for you on the Vista Estates Stakeholder
+      Console. Use the credentials below to sign in — you'll be asked to set a
+      new password of your choosing on first login.</p>
+      <div style="background:#f5f5f4;border:1px solid #e7e5e4;border-radius:8px;
+                  padding:16px;margin:20px 0;font-family:ui-monospace,Menlo,monospace">
+        <div>Portal: <a href="{login_url}" style="color:#064e3b">{login_url}</a></div>
+        <div>Login ID: <b>{email}</b></div>
+        <div>Temporary password: <b>{temp_pw}</b></div>
+      </div>
+      <p style="font-size:12px;color:#78716c">This is an automated message.
+      If you weren't expecting this, please contact your administrator.</p>
+    </div>
+    """
+
+
 # ------------------------------------------------------ auth endpoints -----
-class SessionExchange(BaseModel):
-    session_id: str
-
-
-@api.post("/auth/session")
-async def exchange_session(payload: SessionExchange, response: Response):
-    """Exchange Emergent session_id for our session_token cookie."""
-    r = requests.get(
-        "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
-        headers={"X-Session-ID": payload.session_id}, timeout=30,
-    )
-    if r.status_code != 200:
-        raise HTTPException(401, "Invalid session id")
-    data = r.json()
-
-    email = data["email"].lower()
-    existing = await db.users.find_one({"email": email}, {"_id": 0})
-
-    user_count = await db.users.count_documents({})
-
-    if not existing:
-        # bootstrap admin if first user, else deny
-        if user_count == 0:
-            role: Role = "admin"
-        else:
+@api.post("/auth/login")
+async def auth_login(payload: LoginRequest, response: Response):
+    email = payload.email.lower()
+    key = f"login:{email}"
+    lock = await db.login_attempts.find_one({"_id": key})
+    if lock and lock.get("locked_until"):
+        lu = datetime.fromisoformat(lock["locked_until"])
+        if lu.tzinfo is None:
+            lu = lu.replace(tzinfo=timezone.utc)
+        if lu > datetime.now(timezone.utc):
             raise HTTPException(
-                403,
-                "This email is not authorized. Ask your admin to add you.",
-            )
-        user_doc = User(
-            email=email, name=data.get("name") or email,
-            picture=data.get("picture"), role=role,
-        ).model_dump()
-        await db.users.insert_one(user_doc)
-        existing = user_doc
-        await audit(existing["user_id"], "bootstrap_admin", "user",
-                    existing["user_id"], {"email": email})
-    else:
-        if not existing.get("is_active", True):
-            raise HTTPException(403, "Account deactivated")
-        # refresh name/picture on each login
-        await db.users.update_one(
-            {"user_id": existing["user_id"]},
-            {"$set": {"name": data.get("name") or existing["name"],
-                      "picture": data.get("picture")}},
+                429,
+                "Too many failed attempts. Try again in a few minutes.")
+
+    user = await db.users.find_one({"email": email}, {"_id": 0})
+    if not user or not user.get("password_hash") \
+            or not verify_pw(payload.password, user["password_hash"]):
+        # increment failed attempts
+        await db.login_attempts.update_one(
+            {"_id": key},
+            {"$inc": {"count": 1},
+             "$set": {"last_at": now(),
+                      "locked_until":
+                      (datetime.now(timezone.utc) + timedelta(minutes=15))
+                      .isoformat() if lock and lock.get("count", 0) >= 4
+                      else None}},
+            upsert=True,
         )
+        raise HTTPException(401, "Invalid email or password")
 
-    token = data["session_token"]
-    await db.user_sessions.update_one(
-        {"session_token": token},
-        {"$set": {
-            "session_token": token,
-            "user_id": existing["user_id"],
-            "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
-            "created_at": now(),
-        }},
-        upsert=True,
-    )
+    if not user.get("is_active", True):
+        raise HTTPException(403, "Account deactivated")
 
+    await db.login_attempts.delete_one({"_id": key})
+    token = create_jwt(user["user_id"], user["email"])
     response.set_cookie(
-        key="session_token", value=token, max_age=7 * 24 * 3600,
+        "access_token", token, max_age=int(ACCESS_TOKEN_TTL.total_seconds()),
         httponly=True, secure=True, samesite="none", path="/",
     )
-    user_doc = await db.users.find_one({"user_id": existing["user_id"]}, {"_id": 0})
-    return {"user": user_doc, "session_token": token}
+    return {
+        "access_token": token,
+        "user": {k: v for k, v in user.items() if k != "password_hash"},
+        "must_reset_password": user.get("must_reset_password", False),
+    }
 
 
 @api.post("/auth/logout")
-async def logout(response: Response,
-                 authorization: Optional[str] = Header(None),
-                 session_token: Optional[str] = Cookie(None)):
-    token = session_token
-    if not token and authorization and authorization.startswith("Bearer "):
-        token = authorization.split(" ", 1)[1]
-    if token:
-        await db.user_sessions.delete_one({"session_token": token})
-    response.delete_cookie("session_token", path="/")
+async def auth_logout(response: Response):
+    response.delete_cookie("access_token", path="/")
     return {"ok": True}
 
 
 @api.get("/auth/me")
-async def me(user: User = Depends(get_current_user)):
+async def auth_me(user: User = Depends(get_current_user)):
     return user.model_dump()
+
+
+@api.post("/auth/change-password")
+async def change_password(payload: ChangePasswordRequest,
+                          user: User = Depends(get_current_user)):
+    doc = await db.users.find_one({"user_id": user.user_id}, {"_id": 0})
+    if not doc or not verify_pw(payload.current_password,
+                                doc.get("password_hash", "")):
+        raise HTTPException(400, "Current password is incorrect")
+    validate_password_strength(payload.new_password)
+    if verify_pw(payload.new_password, doc["password_hash"]):
+        raise HTTPException(400, "New password must differ from current one")
+    await db.users.update_one(
+        {"user_id": user.user_id},
+        {"$set": {"password_hash": hash_pw(payload.new_password),
+                  "must_reset_password": False}})
+    await audit(user.user_id, "change_password", "user", user.user_id, {})
+    return {"ok": True}
 
 
 # ------------------------------------------------------ users --------------
 @api.get("/users")
 async def list_users(user: User = Depends(require_roles("admin"))):
-    docs = await db.users.find({}, {"_id": 0}).to_list(1000)
+    docs = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
     return docs
 
 
@@ -569,12 +791,26 @@ async def create_user(payload: UserCreate,
     existing = await db.users.find_one({"email": payload.email.lower()})
     if existing:
         raise HTTPException(400, "User with this email already exists")
+    temp_pw = gen_temp_password()
     u = User(email=payload.email.lower(), name=payload.name,
-             role=payload.role, project_ids=payload.project_ids)
-    await db.users.insert_one(u.model_dump())
+             role=payload.role, phone=payload.phone,
+             project_ids=payload.project_ids,
+             password_hash=hash_pw(temp_pw),
+             must_reset_password=True)
+    doc = u.model_dump()
+    await db.users.insert_one(doc)
     await audit(user.user_id, "create_user", "user", u.user_id,
                 {"email": u.email, "role": u.role})
-    return u.model_dump()
+    login_url = f"{APP_PUBLIC_URL}/login" if APP_PUBLIC_URL else "/login"
+    email_sent = send_email(
+        u.email, f"Invite: {os.environ.get('SMTP_FROM_NAME', 'Vista Estates')}",
+        invite_email_html(u.name, u.email, temp_pw, login_url))
+    doc.pop("password_hash", None)
+    doc.pop("_id", None)
+    return {
+        "user": doc, "temp_password": temp_pw,
+        "login_url": login_url, "email_sent": email_sent,
+    }
 
 
 @api.patch("/users/{user_id}")
@@ -587,7 +823,8 @@ async def update_user(user_id: str, payload: UserUpdate,
     if r.matched_count == 0:
         raise HTTPException(404, "User not found")
     await audit(user.user_id, "update_user", "user", user_id, update)
-    doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    doc = await db.users.find_one({"user_id": user_id},
+                                  {"_id": 0, "password_hash": 0})
     return doc
 
 
@@ -626,12 +863,18 @@ async def create_project(payload: ProjectCreate,
 @api.patch("/projects/{project_id}")
 async def update_project(project_id: str, payload: ProjectCreate,
                          user: User = Depends(require_roles("admin"))):
-    upd = payload.model_dump()
+    upd = {k: v for k, v in payload.model_dump().items() if v is not None}
     r = await db.projects.update_one({"project_id": project_id}, {"$set": upd})
     if r.matched_count == 0:
         raise HTTPException(404, "Project not found")
     await audit(user.user_id, "update_project", "project", project_id, upd)
     return await db.projects.find_one({"project_id": project_id}, {"_id": 0})
+
+
+@api.get("/projects/types")
+async def project_types_schemas():
+    """Public — inventory schema per project type."""
+    return TYPE_SCHEMAS
 
 
 @api.get("/projects/{project_id}/impact")
@@ -1294,33 +1537,24 @@ async def upload_file(file: UploadFile = File(...),
 @api.get("/files/{file_id}/download")
 async def download_file(file_id: str,
                         authorization: Optional[str] = Header(None),
-                        session_token: Optional[str] = Cookie(None),
+                        access_token: Optional[str] = Cookie(None),
                         auth: Optional[str] = Query(None)):
-    # Allow logo (public) via public flag on file record; else require auth
     rec = await db.files.find_one({"file_id": file_id, "is_deleted": False},
                                   {"_id": 0})
     if not rec:
         raise HTTPException(404, "File not found")
     if not rec.get("is_public"):
-        # authenticate: cookie, Bearer, or ?auth= query param
-        token = session_token
+        token = access_token
         if not token and authorization and authorization.startswith("Bearer "):
             token = authorization.split(" ", 1)[1]
         if not token and auth:
             token = auth
         if not token:
             raise HTTPException(401, "Not authenticated")
-        sess = await db.user_sessions.find_one({"session_token": token},
-                                               {"_id": 0})
-        if not sess:
-            raise HTTPException(401, "Invalid session")
-        exp = sess["expires_at"]
-        if isinstance(exp, str):
-            exp = datetime.fromisoformat(exp)
-        if exp.tzinfo is None:
-            exp = exp.replace(tzinfo=timezone.utc)
-        if exp < datetime.now(timezone.utc):
-            raise HTTPException(401, "Session expired")
+        try:
+            jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+        except Exception:
+            raise HTTPException(401, "Invalid token")
     data, ct = get_object(rec["storage_path"])
     return Response(content=data,
                     media_type=rec.get("content_type") or ct,
@@ -1721,6 +1955,185 @@ async def export_stock(project_id: Optional[str] = None,
         headers={"Content-Disposition": 'attachment; filename="stock.xlsx"'})
 
 
+# ------------------------------------------------------ onboarding -------
+@api.get("/onboarding/status")
+async def onboarding_status(user: User = Depends(get_current_user)):
+    proj_count = await db.projects.count_documents({})
+    acc_count = await db.users.count_documents({"role": "accounts", "is_active": True})
+    mgmt_count = await db.users.count_documents({"role": "management", "is_active": True})
+    sm_count = await db.users.count_documents({"role": "site_manager", "is_active": True})
+    units_count = await db.units.count_documents({})
+    steps = {
+        "has_projects": proj_count > 0,
+        "has_units": units_count > 0,
+        "has_accounts": acc_count > 0,
+        "has_management": mgmt_count > 0,
+        "has_site_manager": sm_count > 0,
+    }
+    system_ready = all([steps["has_projects"], steps["has_units"],
+                        steps["has_accounts"], steps["has_management"],
+                        steps["has_site_manager"]])
+    return {
+        "steps": steps,
+        "system_ready": system_ready,
+        "onboarding_completed": user.onboarding_completed,
+        "counts": {"projects": proj_count, "units": units_count,
+                   "accounts": acc_count, "management": mgmt_count,
+                   "site_manager": sm_count},
+    }
+
+
+@api.post("/onboarding/complete")
+async def onboarding_complete(user: User = Depends(get_current_user)):
+    await db.users.update_one({"user_id": user.user_id},
+                              {"$set": {"onboarding_completed": True}})
+    return {"ok": True}
+
+
+# ------------------------------------------------------ dashboard config --
+@api.get("/me/dashboard-config")
+async def get_dash_config(user: User = Depends(get_current_user)):
+    return {"widgets": user.dashboard_config.get("widgets", []) if user.dashboard_config else []}
+
+
+@api.patch("/me/dashboard-config")
+async def set_dash_config(payload: DashboardConfig,
+                          user: User = Depends(get_current_user)):
+    await db.users.update_one({"user_id": user.user_id},
+                              {"$set": {"dashboard_config": payload.model_dump()}})
+    return {"ok": True}
+
+
+# ------------------------------------------------------ bulk unit import --
+@api.post("/units/bulk-import")
+async def units_bulk_import(project_id: str = Form(...),
+                            file: UploadFile = File(...),
+                            user: User = Depends(require_roles("admin"))):
+    """Import units for a project via .xlsx or .csv. Columns per project type."""
+    proj = await db.projects.find_one({"project_id": project_id}, {"_id": 0})
+    if not proj:
+        raise HTTPException(404, "Project not found")
+    schema = TYPE_SCHEMAS.get(proj.get("project_type", "residential"))
+    field_keys = [f["key"] for f in schema["fields"]]
+    expected_cols = ["unit_number", "unit_type", "price"] + field_keys
+
+    raw = await file.read()
+    rows: list[list[Any]] = []
+    filename = (file.filename or "").lower()
+    if filename.endswith(".csv"):
+        text = raw.decode("utf-8-sig", errors="replace")
+        reader = csv.reader(io.StringIO(text))
+        rows = [row for row in reader]
+    else:
+        wb = load_workbook(io.BytesIO(raw))
+        ws = wb.active
+        rows = [[c for c in r] for r in ws.iter_rows(values_only=True)]
+
+    if not rows:
+        raise HTTPException(400, "Empty file")
+    header = [str(c).strip() if c is not None else "" for c in rows[0]]
+    header_map = {h: i for i, h in enumerate(header)}
+    missing = [c for c in ["unit_number"] if c not in header_map]
+    if missing:
+        raise HTTPException(
+            400,
+            f"Missing required column(s): {missing}. "
+            f"Expected columns: {expected_cols}")
+
+    # cache unit types
+    existing_types = {ut["name"]: ut["unit_type_id"] for ut in
+                      await db.unit_types.find({"project_id": project_id},
+                                               {"_id": 0}).to_list(500)}
+
+    inserted, errors = 0, []
+    for i, row in enumerate(rows[1:], start=2):
+        try:
+            def cell(name):
+                idx = header_map.get(name)
+                if idx is None or idx >= len(row):
+                    return None
+                return row[idx]
+
+            unum = cell("unit_number")
+            if not unum:
+                raise ValueError("unit_number required")
+            unum = str(unum).strip()
+
+            price = cell("price") or 0
+            try:
+                price = float(price)
+            except (TypeError, ValueError):
+                price = 0.0
+
+            utype_name = str(cell("unit_type") or "").strip()
+            utype_id = None
+            if utype_name:
+                if utype_name in existing_types:
+                    utype_id = existing_types[utype_name]
+                else:
+                    new_ut = UnitType(project_id=project_id, name=utype_name,
+                                      default_price=price)
+                    await db.unit_types.insert_one(new_ut.model_dump())
+                    existing_types[utype_name] = new_ut.unit_type_id
+                    utype_id = new_ut.unit_type_id
+
+            attrs: dict = {}
+            for fk in field_keys:
+                v = cell(fk)
+                if v is None or v == "":
+                    continue
+                # type coercion
+                f = next((x for x in schema["fields"] if x["key"] == fk), {})
+                if f.get("type") == "number":
+                    try:
+                        v = float(v)
+                    except (TypeError, ValueError):
+                        pass
+                elif f.get("type") == "boolean":
+                    v = str(v).strip().lower() in ("1","true","yes","y")
+                else:
+                    v = str(v).strip()
+                attrs[fk] = v
+
+            u = Unit(project_id=project_id, unit_type_id=utype_id,
+                     unit_number=unum, price=price, attributes=attrs)
+            await db.units.insert_one(u.model_dump())
+            inserted += 1
+        except Exception as e:
+            errors.append({"row": i, "error": str(e)})
+
+    await audit(user.user_id, "units_bulk_import", "project", project_id,
+                {"inserted": inserted, "errors": len(errors)})
+    return {"inserted": inserted, "errors": errors}
+
+
+@api.get("/units/bulk-template")
+async def units_bulk_template(project_type: ProjectType = "residential",
+                              user: User = Depends(require_roles("admin"))):
+    schema = TYPE_SCHEMAS[project_type]
+    headers = ["unit_number", "unit_type", "price"] + [f["key"] for f in schema["fields"]]
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f"{project_type}_units"
+    ws.append(headers)
+    # sample row
+    sample_row = ["A-101", schema["unit_types"][0], 5000000]
+    for f in schema["fields"]:
+        if f["type"] == "number":
+            sample_row.append(0)
+        elif f["type"] == "boolean":
+            sample_row.append("No")
+        else:
+            sample_row.append(f.get("options", [""])[0] if f.get("options") else "")
+    ws.append(sample_row)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="units_{project_type}_template.xlsx"'})
+
+
 # ------------------------------------------------------ mount -------------
 app.include_router(api)
 app.add_middleware(
@@ -1736,6 +2149,22 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup():
     init_storage()
+    # seed admin if none exists
+    existing = await db.users.find_one({"email": ADMIN_EMAIL}, {"_id": 0})
+    if not existing:
+        admin = User(
+            email=ADMIN_EMAIL, name="System Administrator",
+            role="admin", project_ids=[],
+            password_hash=hash_pw(ADMIN_TEMP_PASSWORD),
+            must_reset_password=True,
+        )
+        await db.users.insert_one(admin.model_dump())
+        log.info("Seeded admin user: %s", ADMIN_EMAIL)
+    # indexes
+    try:
+        await db.users.create_index("email", unique=True)
+    except Exception:
+        pass
     log.info("Backend started")
 
 
