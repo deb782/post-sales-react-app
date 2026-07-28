@@ -1,0 +1,31 @@
+{
+  "summary": "Iteration 7 covers the 3 new features: real Gmail SMTP invites, project image upload, and DnD dashboard-config persistence. Backend: 11/11 pytest tests pass — SMTP actually delivers (email_sent=true observed on live invite via smtp.gmail.com with sales@agrocorp.co.in app password), POST /projects/{id}/image works (multipart→file store→public /api/files/{id}/download returns image bytes with image/* content-type, project.image_url is patched), non-existent project → 404, non-admin roles → 403, GET/PATCH /me/dashboard-config persists exactly (including empty array). Regression endpoints intact (/dashboard/summary, /users, /projects, /revenue-targets, auth flow). Frontend: Dashboard customizer popover (dashboard-customize-btn) shows all 7 widget rows (kpis, variance, revenue_target, inventory_bar, expense_pie, expense_trend, vendors) each with a Switch + drag handle + Reset button; toggling Vendor Spend off updates aria-checked and PERSISTS across page reload (verified). Only critical UI miss: the Projects edit dialog is missing the promised project-image-input file input entirely — Projects.jsx defines an uploadImage() helper but never renders <input type='file'> in the DialogContent (0 file inputs in DOM). SMTP is real, so I limited invite tests to 3 plus-alias emails (sales+iter7t*@agrocorp.co.in).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Projects edit dialog", "issue": "Missing project-image-input file input and project-image-preview element. uploadImage() function exists in Projects.jsx (line 62) but is never wired to any <input type='file'>. 0 file inputs found in DOM when Edit dialog is open. Card thumbnail cannot be updated from UI.", "selector": "[data-testid='project-image-input']", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/backend_test_iter7.py", "/app/test_reports/pytest/iter7.xml"],
+  "action_items": [
+    "Add file input inside Projects edit Dialog (inside DialogContent, likely after target_revenue/description) with data-testid='project-image-input' that calls uploadImage(editing.project_id, file). Also render a preview <img data-testid='project-image-preview' src={form.image_url ? (form.image_url.startsWith('/api') ? API_BASE + form.image_url.replace('/api','') : form.image_url) : IMAGES[0]} />. The uploadImage() logic itself is already correct — just missing UI wiring.",
+    "Optional: gate the file input on `editing` being truthy (create-mode has no project_id yet so upload must be deferred until after create)."
+  ],
+  "critical_code_review_comments": [
+    "Projects.jsx: uploadImage function defined but no consumer — dead code from a UI perspective. Ship the input, or the whole feature is missing.",
+    "download_file (server.py L1560): sensible pattern that supports Bearer / Cookie / ?auth query. Good for embedding in <img src> for private files. is_public bypass is correct.",
+    "upload_project_image: image_url stored as relative /api/... path — frontend already resolves it via API_BASE prefix. Consistent with the rest of the app.",
+    "DashboardCustomizer save() catches errors but keeps optimistic local state — a failed PATCH will silently diverge from server. Consider re-fetching or reverting order on toast.error.",
+    "Backend pytest.ini forces -n 2 --dist loadscope; session-scoped admin_token fixture will run per xdist worker, causing race on must_reset_password → 'Current password is incorrect'. Fixed in iter7 test by trying rotated password first (idempotent). Recommend admin fixture pattern be documented for future iterations."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test_iter7.py (new)"],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "80% (dashboard customizer + persistence pass; project image UI missing)"},
+  "test_credentials": "admin@vistaestates.com / Vista@Admin#2026 (temp) → NewSecure#Test2026 (rotated by fixture). SMTP invite plus-aliases used: sales+observe@, sales+iter7t*, sales+mgmt*, sales+dc*.",
+  "seed_data_creation": "1 residential project TEST_UI_Proj + assorted TEST_ projects/invited users from pytest fixtures (admin still onboarded).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Admin password is NewSecure#Test2026 (already rotated). Environment is already onboarded, so admin lands on /dashboard. SMTP is live via Gmail — DO NOT stress-invite (rate limits). Backend pytest requires the fixture to try rotated pw first because pytest.ini forces xdist -n 2 --dist loadscope. If main agent adds the project-image-input, retest by uploading a small PNG through the Edit dialog and verifying (1) preview shows, (2) card thumbnail updates, (3) project.image_url is set in the API.",
+  "rca_of_the_issue": "Projects.jsx renders the Edit dialog contents but never includes an <input type='file'> tied to the uploadImage() helper. The helper was authored but the JSX wiring was omitted — see line 62-75 vs the dialog form at lines 111-141 which lists only text/number/date inputs and no file input. Fix: add an <input type='file' accept='image/*' data-testid='project-image-input' onChange={e => editing && uploadImage(editing.project_id, e.target.files[0])} /> plus a preview <img data-testid='project-image-preview' src={...} /> inside DialogContent, ideally shown only when `editing` is truthy."
+}

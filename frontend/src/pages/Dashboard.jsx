@@ -8,6 +8,7 @@ import {
 import { Building2, Home, IndianRupee, Receipt, TrendingUp, AlertCircle, ArrowUp, ArrowDown, Minus } from "lucide-react";
 import { useProjectFilter } from "@/components/ProjectFilter";
 import { Shareable } from "@/components/Shareable";
+import DashboardCustomizer, { useDashboardConfig } from "@/components/DashboardCustomizer";
 
 const COLORS = ["#064e3b", "#f59e0b", "#e11d48", "#78716c", "#3b82f6"];
 
@@ -17,6 +18,7 @@ export default function Dashboard() {
   const [data, setData] = useState(null);
   const { user } = useAuth();
   const { ProjectFilter, projectId } = useProjectFilter();
+  const { order, save } = useDashboardConfig();
 
   useEffect(() => {
     (async () => {
@@ -48,101 +50,106 @@ export default function Dashboard() {
           <h1 className="mt-1 text-4xl font-bold text-stone-900">Hello, {user.name}</h1>
           <p className="mt-1 text-stone-500 text-sm">Here&apos;s what&apos;s happening across your projects today.</p>
         </div>
-        <ProjectFilter />
+        <div className="flex items-center gap-3">
+          <DashboardCustomizer order={order} onChange={save} />
+          <ProjectFilter />
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      {renderWidgets(order, { data, unitBar, expPie })}
+    </div>
+  );
+}
+
+function renderWidgets(order, { data, unitBar, expPie }) {
+  const R = {
+    kpis: () => (
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" data-testid="widget-kpis">
         <Kpi label="Projects" value={data.projects_count} icon={Building2} />
         <Kpi label="Units Sold" value={`${data.units.sold} / ${data.units.total}`} icon={Home} accent="emerald" />
         <Kpi label="Revenue Received" value={fmt(data.revenue.received)} icon={IndianRupee} accent="emerald" />
         <Kpi label="Pending Approvals" value={data.expenses.pending + data.expenses.stage1} icon={AlertCircle} accent="amber" />
       </div>
-
-      {data.period_targets && (
+    ),
+    variance: () => data.period_targets && (
+      <Shareable filename="revenue-variance.png" testId="share-variance">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="period-targets">
           <VarianceTile title="Month" data={data.period_targets.monthly} />
           <VarianceTile title="Quarter" data={data.period_targets.quarterly} />
         </div>
-      )}
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-white border border-stone-200 rounded-xl p-6 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <div className="text-xs uppercase tracking-widest text-stone-500">Revenue vs Target</div>
-              <div className="text-2xl font-bold mt-1">{fmt(data.revenue.received)}</div>
-            </div>
-            <TrendingUp className="w-5 h-5 text-emerald-800" />
+      </Shareable>
+    ),
+    revenue_target: () => (
+      <div className="bg-white border border-stone-200 rounded-xl p-6 shadow-sm" data-testid="widget-revenue-target">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <div className="text-xs uppercase tracking-widest text-stone-500">Revenue vs Target</div>
+            <div className="text-2xl font-bold mt-1">{fmt(data.revenue.received)}</div>
           </div>
-          <div className="grid grid-cols-3 gap-4 text-sm">
-            <Bucket label="Accrued" value={fmt(data.revenue.accrued)} />
-            <Bucket label="Received" value={fmt(data.revenue.received)} tone="emerald" />
-            <Bucket label="Receivable" value={fmt(data.revenue.receivable)} tone="amber" />
-          </div>
-          <div className="h-2 bg-stone-100 rounded-full mt-6 overflow-hidden">
-            <div
-              className="h-full bg-emerald-800"
-              style={{ width: `${data.revenue.target ? Math.min(100, (data.revenue.received / data.revenue.target) * 100) : 0}%` }}
-            />
-          </div>
-          <div className="text-xs text-stone-500 mt-1">
-            Target: {fmt(data.revenue.target)}
-          </div>
+          <TrendingUp className="w-5 h-5 text-emerald-800" />
         </div>
-        <div className="bg-white border border-stone-200 rounded-xl p-6 shadow-sm">
-          <div className="text-xs uppercase tracking-widest text-stone-500 mb-4">Inventory Status</div>
-          <div style={{ width: "100%", height: 200, minHeight: 200 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={unitBar}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e7e5e4" />
-                <XAxis dataKey="name" stroke="#78716c" fontSize={12} />
-                <YAxis stroke="#78716c" fontSize={12} allowDecimals={false} />
-                <Tooltip />
-                <Bar dataKey="value" radius={[6, 6, 0, 0]}>
-                  {unitBar.map((_, i) => (<Cell key={i} fill={COLORS[i]} />))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+        <div className="grid grid-cols-3 gap-4 text-sm">
+          <Bucket label="Accrued" value={fmt(data.revenue.accrued)} />
+          <Bucket label="Received" value={fmt(data.revenue.received)} tone="emerald" />
+          <Bucket label="Receivable" value={fmt(data.revenue.receivable)} tone="amber" />
+        </div>
+        <div className="h-2 bg-stone-100 rounded-full mt-6 overflow-hidden">
+          <div className="h-full bg-emerald-800" style={{ width: `${data.revenue.target ? Math.min(100, (data.revenue.received / data.revenue.target) * 100) : 0}%` }} />
+        </div>
+        <div className="text-xs text-stone-500 mt-1">Target: {fmt(data.revenue.target)}</div>
+      </div>
+    ),
+    inventory_bar: () => (
+      <div className="bg-white border border-stone-200 rounded-xl p-6 shadow-sm" data-testid="widget-inventory-bar">
+        <div className="text-xs uppercase tracking-widest text-stone-500 mb-4">Inventory Status</div>
+        <div style={{ width: "100%", height: 220, minHeight: 220 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={unitBar}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e7e5e4" />
+              <XAxis dataKey="name" stroke="#78716c" fontSize={12} />
+              <YAxis stroke="#78716c" fontSize={12} allowDecimals={false} />
+              <Tooltip />
+              <Bar dataKey="value" radius={[6, 6, 0, 0]}>{unitBar.map((_, i) => <Cell key={i} fill={COLORS[i]} />)}</Bar>
+            </BarChart>
+          </ResponsiveContainer>
         </div>
       </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="bg-white border border-stone-200 rounded-xl p-6 shadow-sm">
-          <div className="text-xs uppercase tracking-widest text-stone-500 mb-4">Expenses by Status</div>
-          <div style={{ width: "100%", height: 220, minHeight: 220 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={expPie} innerRadius={45} outerRadius={80} dataKey="value" paddingAngle={2}>
-                  {expPie.map((_, i) => <Cell key={i} fill={COLORS[i]} />)}
-                </Pie>
-                <Tooltip />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="text-sm text-stone-600 mt-2">Approved value: <b>{fmt(data.expenses.approved_amount)}</b></div>
+    ),
+    expense_pie: () => (
+      <div className="bg-white border border-stone-200 rounded-xl p-6 shadow-sm" data-testid="widget-expense-pie">
+        <div className="text-xs uppercase tracking-widest text-stone-500 mb-4">Expenses by Status</div>
+        <div style={{ width: "100%", height: 220, minHeight: 220 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie data={expPie} innerRadius={45} outerRadius={80} dataKey="value" paddingAngle={2}>
+                {expPie.map((_, i) => <Cell key={i} fill={COLORS[i]} />)}
+              </Pie>
+              <Tooltip /><Legend wrapperStyle={{ fontSize: 12 }} />
+            </PieChart>
+          </ResponsiveContainer>
         </div>
-
-        <div className="lg:col-span-2 bg-white border border-stone-200 rounded-xl p-6 shadow-sm">
-          <div className="text-xs uppercase tracking-widest text-stone-500 mb-4">Approved Expenses (last 30 days)</div>
-          <div style={{ width: "100%", height: 220, minHeight: 220 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={data.expense_trend}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e7e5e4" />
-                <XAxis dataKey="date" stroke="#78716c" fontSize={11} />
-                <YAxis stroke="#78716c" fontSize={11} />
-                <Tooltip />
-                <Line type="monotone" dataKey="amount" stroke="#064e3b" strokeWidth={2} dot={{ r: 3 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+        <div className="text-sm text-stone-600 mt-2">Approved value: <b>{fmt(data.expenses.approved_amount)}</b></div>
+      </div>
+    ),
+    expense_trend: () => (
+      <div className="bg-white border border-stone-200 rounded-xl p-6 shadow-sm" data-testid="widget-expense-trend">
+        <div className="text-xs uppercase tracking-widest text-stone-500 mb-4">Approved Expenses (last 30 days)</div>
+        <div style={{ width: "100%", height: 220, minHeight: 220 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={data.expense_trend}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e7e5e4" />
+              <XAxis dataKey="date" stroke="#78716c" fontSize={11} />
+              <YAxis stroke="#78716c" fontSize={11} />
+              <Tooltip />
+              <Line type="monotone" dataKey="amount" stroke="#064e3b" strokeWidth={2} dot={{ r: 3 }} />
+            </LineChart>
+          </ResponsiveContainer>
         </div>
       </div>
-
-      {data.top_vendors && data.top_vendors.length > 0 && (
-        <Shareable filename="vendor-spend.png" testId="share-vendors">
-          <div className="bg-white border border-stone-200 rounded-xl p-6 shadow-sm" data-testid="top-vendors">
+    ),
+    vendors: () => data.top_vendors && data.top_vendors.length > 0 && (
+      <Shareable filename="vendor-spend.png" testId="share-vendors">
+        <div className="bg-white border border-stone-200 rounded-xl p-6 shadow-sm" data-testid="top-vendors">
           <div className="flex items-baseline justify-between mb-4">
             <div>
               <div className="text-xs uppercase tracking-widest text-stone-500">Vendor spend intelligence</div>
@@ -151,13 +158,15 @@ export default function Dashboard() {
             <div className="text-xs text-stone-500">Approved expenses only</div>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
-            {data.top_vendors.map((v) => (
-              <VendorTile key={v.vendor} v={v} />
-            ))}
+            {data.top_vendors.map((v) => <VendorTile key={v.vendor} v={v} />)}
           </div>
-          </div>
-        </Shareable>
-      )}
+        </div>
+      </Shareable>
+    ),
+  };
+  return (
+    <div className="space-y-8">
+      {order.map(id => R[id] && <div key={id}>{R[id]()}</div>)}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { api, API_BASE } from "@/lib/api";
 import { useAuth, can } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -57,6 +57,21 @@ export default function Projects() {
     setEditing(p);
     setForm({ ...BLANK, ...p });
     setOpen(true);
+  };
+
+  const uploadImage = async (projectId, file) => {
+    if (!file) return;
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      const { data } = await api.post(`/projects/${projectId}/image`, fd);
+      toast.success("Image uploaded");
+      // patch local form too
+      if (editing && editing.project_id === projectId) {
+        setForm(f => ({ ...f, image_url: data.image_url }));
+      }
+      load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Upload failed"); }
   };
 
   const askDelete = async (p) => {
@@ -136,7 +151,7 @@ export default function Projects() {
         {items.map((p, idx) => (
           <div key={p.project_id} className="group bg-white border border-stone-200 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow" data-testid={`project-card-${idx}`}>
             <div className="h-40 bg-stone-200 relative">
-              <img src={p.image_url || IMAGES[idx % IMAGES.length]} alt="" className="w-full h-full object-cover" />
+              <img src={p.image_url ? (p.image_url.startsWith("/api") ? `${API_BASE}${p.image_url.replace("/api","")}` : p.image_url) : IMAGES[idx % IMAGES.length]} alt="" className="w-full h-full object-cover" />
               <div className="absolute inset-0 bg-gradient-to-t from-stone-900/60 to-transparent" />
               <div className="absolute bottom-3 left-4 right-4 text-white">
                 <div className="text-lg font-semibold">{p.name}</div>

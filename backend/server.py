@@ -1612,6 +1612,36 @@ async def upload_logo(file: UploadFile = File(...),
     return doc
 
 
+@api.post("/projects/{project_id}/image")
+async def upload_project_image(project_id: str,
+                               file: UploadFile = File(...),
+                               user: User = Depends(require_roles("admin"))):
+    proj = await db.projects.find_one({"project_id": project_id}, {"_id": 0})
+    if not proj:
+        raise HTTPException(404, "Project not found")
+    data = await file.read()
+    ext = (file.filename or "jpg").split(".")[-1].lower()
+    file_id = new_id("file")
+    path = f"{APP_NAME}/projects/{project_id}/{file_id}.{ext}"
+    result = put_object(path, data, file.content_type or "image/jpeg")
+    doc = {
+        "file_id": file_id, "storage_path": result["path"],
+        "original_filename": file.filename,
+        "content_type": file.content_type,
+        "size": result.get("size", len(data)),
+        "uploaded_by": user.user_id, "is_deleted": False, "is_public": True,
+        "created_at": now(),
+    }
+    await db.files.insert_one(doc)
+    image_url = f"/api/files/{file_id}/download"
+    await db.projects.update_one({"project_id": project_id},
+                                 {"$set": {"image_url": image_url}})
+    await audit(user.user_id, "upload_project_image", "project", project_id,
+                {"file_id": file_id})
+    return {"file_id": file_id, "image_url": image_url}
+
+
+
 # ------------------------------------------------------ analytics ---------
 @api.get("/dashboard/summary")
 async def dashboard_summary(project_id: Optional[str] = None,
