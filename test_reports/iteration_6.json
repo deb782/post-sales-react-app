@@ -1,0 +1,27 @@
+{
+  "summary": "Frontend-only end-to-end regression after backend refactor. Ran the complete admin first-run journey (Login → forced Reset → Onboarding 3-step wizard: Project→Inventory→Team → Dashboard), then admin functions (Projects edit, Users invite with temp password panel, logout), then invited accounts user first-login flow (login → forced reset → lands on /dashboard, not /onboarding). All 13 scenarios from the review request pass. The reported infinite-loop redirect fix in App.js Protected wrapper is verified — reset-password page renders correctly instead of redirecting in a loop.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test_iter5.py (unchanged, not re-run since backend test skipped per request)"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Note (informational, not a bug): Dashboard's Shareable buttons for share-vendors/share-variance only render when data.top_vendors has entries or variance is computable. On a fresh install with no expenses, these testids are absent — expected but the review checklist assumed they render unconditionally.",
+    "Onboarding.jsx: total_units_planned and target_revenue kept as strings when user types (they only Number() at submit) — harmless but eslint may flag mixed-type state.",
+    "Users.jsx: DELETE /users/{user_id} performs a soft-deactivate (`is_active=false`) but the UI's toggleActive already reflects this correctly via Switch. No dedicated 'reset user password' admin endpoint exists — if an admin needs to reissue a temp password to a locked-out user, they currently have to delete + re-invite. Consider adding POST /api/users/{id}/reset-password.",
+    "Login form uses email.toLowerCase() before submit — good, but the invite form does not normalize emails before POST, so a user invited as 'Foo@X.com' can only log in with that exact case unless backend lowercases on lookup. Recommend either normalizing on invite or on backend user lookup for consistency."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested (skip per request)", "frontend": "100% (13/13 scenarios pass)"},
+  "test_credentials": "admin@vistaestates.com / Vista@Admin#2026 (initial temp) → NewSecure#2026Test (after reset). ux5_accounts@example.com / (temp regenerated via API), then Accounts@2026Test!",
+  "seed_data_creation": "Cleaned DB (users/projects/units/audit_logs/system_state/login_attempts) at start, then created via UI: 1 project 'Sunrise Enclave Ph-1' (plot type, Bangalore), 1 unit P-01, 4 invited users (UX5 Accounts/Mgmt/Site/Extra) plus 1 seed admin.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "The 3 seeded onboarded users (ux5_accounts/mgmt/site) still exist with unknown temp passwords — if a next iteration needs to log in as them, either delete + re-invite via API to capture a fresh temp_password, or add an admin reset endpoint. Admin password is now 'NewSecure#2026Test'. Accounts user password is 'Accounts@2026Test!'. To reset the environment for a full re-run, use the mongo cleanup + `sudo supervisorctl restart backend` to re-seed the admin with `must_reset_password=true`.",
+  "rca_of_the_issue": "Infinite-loop redirect bug was in Protected wrapper — it redirected users with must_reset_password=true to /reset-password even when they were already on that route, causing an endless <Navigate>. Fix (line 26 of App.js: `!window.location.pathname.startsWith('/reset-password')` guard) is confirmed working end-to-end: /reset-password renders the form, allows password change, and correctly navigates to /onboarding (admin) or /dashboard (non-admin) after refresh()."
+}

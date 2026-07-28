@@ -23,7 +23,9 @@ function Protected({ children, roles }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="p-8 text-stone-500">Loading…</div>;
   if (!user) return <Navigate to="/login" replace />;
-  if (user.must_reset_password) return <Navigate to="/reset-password" replace />;
+  if (user.must_reset_password && !window.location.pathname.startsWith("/reset-password")) {
+    return <Navigate to="/reset-password" replace />;
+  }
   if (roles && !roles.includes(user.role)) return <Navigate to="/dashboard" replace />;
   return children;
 }
