@@ -83,8 +83,8 @@ export default function Dashboard() {
         </div>
         <div className="bg-white border border-stone-200 rounded-xl p-6 shadow-sm">
           <div className="text-xs uppercase tracking-widest text-stone-500 mb-4">Inventory Status</div>
-          <div style={{ width: "100%", height: 200 }}>
-            <ResponsiveContainer>
+          <div style={{ width: "100%", height: 200, minHeight: 200 }}>
+            <ResponsiveContainer width="100%" height="100%">
               <BarChart data={unitBar}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e7e5e4" />
                 <XAxis dataKey="name" stroke="#78716c" fontSize={12} />
@@ -102,8 +102,8 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="bg-white border border-stone-200 rounded-xl p-6 shadow-sm">
           <div className="text-xs uppercase tracking-widest text-stone-500 mb-4">Expenses by Status</div>
-          <div style={{ width: "100%", height: 220 }}>
-            <ResponsiveContainer>
+          <div style={{ width: "100%", height: 220, minHeight: 220 }}>
+            <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie data={expPie} innerRadius={45} outerRadius={80} dataKey="value" paddingAngle={2}>
                   {expPie.map((_, i) => <Cell key={i} fill={COLORS[i]} />)}
@@ -118,8 +118,8 @@ export default function Dashboard() {
 
         <div className="lg:col-span-2 bg-white border border-stone-200 rounded-xl p-6 shadow-sm">
           <div className="text-xs uppercase tracking-widest text-stone-500 mb-4">Approved Expenses (last 30 days)</div>
-          <div style={{ width: "100%", height: 220 }}>
-            <ResponsiveContainer>
+          <div style={{ width: "100%", height: 220, minHeight: 220 }}>
+            <ResponsiveContainer width="100%" height="100%">
               <LineChart data={data.expense_trend}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e7e5e4" />
                 <XAxis dataKey="date" stroke="#78716c" fontSize={11} />
