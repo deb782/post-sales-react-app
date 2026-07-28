@@ -1,0 +1,39 @@
+{
+  "summary": "First integration test pass. Backend: 28 pytest tests written covering auth, RBAC, projects, unit-types, units, sales, payments, revenue/summary, expenses (small auto-final, large 2-stage, rejection), notifications, stock (opening/inward/outward closing), users (create + toggle is_active), settings PATCH, excel template+import, audit-logs, search, dashboard/summary. 28/28 passing. Frontend: login page renders 'Continue with Google' button; after seeding session_token in localStorage, admin dashboard loads all KPIs and charts, sidebar shows all 10 links; all 9 admin routes navigate successfully with no runtime errors. Site Manager only sees 5 allowed links (Dashboard/Projects/Inventory/Expenses/Stock Book); /users navigation as SM correctly redirects to /dashboard.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard (all roles)", "issues": ["Recharts logs repeated warnings 'width(-1) height(-1) of chart should be greater than 0' when charts mount inside a container that measures 0 during first paint. Purely cosmetic — charts render correctly after layout settles, but the noisy console warnings should be silenced by giving ResponsiveContainer an explicit minHeight or wrapping charts in a div with a defined height."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: Silence Recharts width/height(-1) console warnings on Dashboard by setting explicit min-height on chart wrappers (e.g., <div style={{ height: 260 }}><ResponsiveContainer ...>)."
+  ],
+  "critical_code_review_comments": [
+    "server.py exchange_session uses upstream 'session_token' from Emergent auth as our stored token; since it upserts on session_token, repeated logins from the same account are idempotent — good.",
+    "list_expenses: for site_manager the line `q['project_id'] = q.get('project_id', {'$in': user.project_ids})` is redundant because user_scope_projects already applied the same scope one block above. Harmless but dead code.",
+    "sitemgr can raise expense but expense doc's raised_by field is stored; however the /expenses list uses project_id scoping only, not raised_by — comment says 'their own + their projects' but implementation is projects-only. Minor doc/impl mismatch.",
+    "auth.py exchange_session: cookie is set httponly+secure+samesite=None which is correct for cross-site preview; frontend also stores token in localStorage — dual storage is intentional for Bearer fallback and works.",
+    "dashboard_summary iterates expenses with async for TWICE (once for approved_amt, once for trend). Combine into a single pass for efficiency.",
+    "excel_import 'units' branch creates a new UnitType silently on unknown name — no dedup safety if names are case-variant. Consider casefold match."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (new)"
+  ],
+  "success_rate": {"backend": "100% (28/28)", "frontend": "100% (all routes load, RBAC sidebar correct, redirects work)"},
+  "test_credentials": "No real Google credentials required. For automated auth, insert users + user_sessions rows in Mongo (test_database) per /app/auth_testing.md. During this run: admin token fe_tok_1785221815095, site_manager token fe_sm_1785221866941 (both still valid 7 days).",
+  "seed_data_creation": "Backend pytest module creates TEST_-prefixed users, one project TEST_Proj_A, one unit A-101 sold to 'Ravi', multiple expenses (small auto-final, large stage1→final, rejected), stock item 'Cement Bag' with movements, and an imported project TEST_ImportedProj. Two extra FE-only users (fe_admin@example.com, fe_sm@example.com) created directly for browser testing.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend endpoints are fully green. Seed data left in test_database. When re-running backend_test.py the module-level clean_db fixture wipes ALL collections first, so FE tokens seeded outside pytest will be invalidated — re-seed them via mongosh if running FE tests after backend suite. Emergent object-storage was NOT exercised (no /files/upload test — INFO not FAIL as instructed).",
+  "rca of the issue": "N/A — no blocking issues found."
+}

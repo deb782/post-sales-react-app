@@ -1,34 +1,17 @@
-.App-logo {
-    height: 40vmin;
-    pointer-events: none;
+/* App-level tweaks (avoid centering the whole app) */
+.sidebar-link {
+  @apply flex items-center gap-3 rounded-md px-3 py-2 text-sm text-stone-300 hover:bg-stone-800 hover:text-white transition-colors;
 }
-
-@media (prefers-reduced-motion: no-preference) {
-    .App-logo {
-        animation: App-logo-spin infinite 20s linear;
-    }
+.sidebar-link.active {
+  @apply bg-emerald-900 text-white;
 }
-
-.App-header {
-    background-color: #0f0f10;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    font-size: calc(10px + 2vmin);
-    color: white;
+.kpi-card {
+  @apply relative overflow-hidden bg-white border border-stone-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow;
 }
-
-.App-link {
-    color: #61dafb;
+.kpi-label {
+  @apply text-xs uppercase tracking-widest text-stone-500;
 }
-
-@keyframes App-logo-spin {
-    from {
-        transform: rotate(0deg);
-    }
-    to {
-        transform: rotate(360deg);
-    }
+.kpi-value {
+  @apply mt-2 text-3xl font-bold text-stone-900;
+  font-family: var(--font-heading);
 }

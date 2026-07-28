@@ -1,89 +1,1205 @@
-from fastapi import FastAPI, APIRouter
-from dotenv import load_dotenv
-from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
+"""
+Real Estate Stakeholder Dashboard — FastAPI backend.
+
+Modules: auth (Emergent Google), users, projects, unit_types, units, payments,
+expenses (2-stage approval), stock (items + movements), audit log, settings,
+excel import/export, dashboard analytics, notifications, files.
+"""
+from __future__ import annotations
+
+import io
 import os
+import uuid
 import logging
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List
-import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from typing import Optional, List, Literal, Any
 
+import requests
+from dotenv import load_dotenv
+from fastapi import (
+    FastAPI, APIRouter, HTTPException, Depends, Header, Query, Response,
+    UploadFile, File, Form, Cookie,
+)
+from fastapi.responses import StreamingResponse
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from openpyxl import Workbook, load_workbook
 
+# ---------------------------------------------------------------- setup ----
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+load_dotenv(ROOT_DIR / ".env")
 
-# MongoDB connection
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+MONGO_URL = os.environ["MONGO_URL"]
+DB_NAME = os.environ["DB_NAME"]
+EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY")
+APP_NAME = "realestate-dashboard"
 
-# Create the main app without a prefix
-app = FastAPI()
+client = AsyncIOMotorClient(MONGO_URL)
+db = client[DB_NAME]
 
-# Create a router with the /api prefix
-api_router = APIRouter(prefix="/api")
+app = FastAPI(title="Real Estate Dashboard")
+api = APIRouter(prefix="/api")
+
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+log = logging.getLogger("app")
+
+# --------------------------------------------------------- object storage ----
+STORAGE_URL = "https://integrations.emergentagent.com/objstore/api/v1/storage"
+_storage_key: Optional[str] = None
 
 
-# Define Models
-class StatusCheck(BaseModel):
-    model_config = ConfigDict(extra="ignore")  # Ignore MongoDB's _id field
-    
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+def init_storage() -> Optional[str]:
+    global _storage_key
+    if _storage_key:
+        return _storage_key
+    if not EMERGENT_KEY:
+        log.warning("EMERGENT_LLM_KEY missing — object storage disabled")
+        return None
+    try:
+        r = requests.post(f"{STORAGE_URL}/init",
+                          json={"emergent_key": EMERGENT_KEY}, timeout=30)
+        r.raise_for_status()
+        _storage_key = r.json()["storage_key"]
+        log.info("Object storage initialized")
+        return _storage_key
+    except Exception as e:
+        log.error("Storage init failed: %s", e)
+        return None
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
 
-# Add your routes to the router instead of directly to app
-@api_router.get("/")
-async def root():
-    return {"message": "Hello World"}
+def put_object(path: str, data: bytes, content_type: str) -> dict:
+    key = init_storage()
+    if not key:
+        raise HTTPException(500, "Storage unavailable")
+    r = requests.put(f"{STORAGE_URL}/objects/{path}",
+                     headers={"X-Storage-Key": key, "Content-Type": content_type},
+                     data=data, timeout=120)
+    r.raise_for_status()
+    return r.json()
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
-    
-    # Convert to dict and serialize datetime to ISO string for MongoDB
-    doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
-    
-    _ = await db.status_checks.insert_one(doc)
-    return status_obj
 
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    # Exclude MongoDB's _id field from the query results
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
-    
-    # Convert ISO string timestamps back to datetime objects
-    for check in status_checks:
-        if isinstance(check['timestamp'], str):
-            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
-    
-    return status_checks
+def get_object(path: str) -> tuple[bytes, str]:
+    key = init_storage()
+    if not key:
+        raise HTTPException(500, "Storage unavailable")
+    r = requests.get(f"{STORAGE_URL}/objects/{path}",
+                     headers={"X-Storage-Key": key}, timeout=60)
+    r.raise_for_status()
+    return r.content, r.headers.get("Content-Type", "application/octet-stream")
 
-# Include the router in the main app
-app.include_router(api_router)
 
+# -------------------------------------------------------------- models -----
+Role = Literal["admin", "accounts", "management", "site_manager"]
+ExpenseStatus = Literal["pending", "stage1_approved", "final_approved",
+                        "rejected"]
+
+
+def new_id(prefix: str = "id") -> str:
+    return f"{prefix}_{uuid.uuid4().hex[:16]}"
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class User(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    user_id: str = Field(default_factory=lambda: new_id("user"))
+    email: EmailStr
+    name: str
+    picture: Optional[str] = None
+    role: Role = "site_manager"
+    project_ids: List[str] = []
+    is_active: bool = True
+    created_at: str = Field(default_factory=now)
+
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    name: str
+    role: Role
+    project_ids: List[str] = []
+
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    role: Optional[Role] = None
+    project_ids: Optional[List[str]] = None
+    is_active: Optional[bool] = None
+
+
+class Project(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    project_id: str = Field(default_factory=lambda: new_id("proj"))
+    name: str
+    location: str = ""
+    description: str = ""
+    target_revenue: float = 0
+    image_url: Optional[str] = None
+    is_active: bool = True
+    created_at: str = Field(default_factory=now)
+
+
+class ProjectCreate(BaseModel):
+    name: str
+    location: str = ""
+    description: str = ""
+    target_revenue: float = 0
+    image_url: Optional[str] = None
+
+
+class UnitType(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    unit_type_id: str = Field(default_factory=lambda: new_id("utype"))
+    project_id: str
+    name: str  # e.g. 1BHK, Villa, Plot
+    default_price: float = 0
+
+
+class UnitTypeCreate(BaseModel):
+    project_id: str
+    name: str
+    default_price: float = 0
+
+
+class Unit(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    unit_id: str = Field(default_factory=lambda: new_id("unit"))
+    project_id: str
+    unit_type_id: Optional[str] = None
+    unit_number: str
+    price: float = 0
+    status: Literal["available", "reserved", "sold", "cancelled"] = "available"
+    buyer_name: Optional[str] = None
+    buyer_contact: Optional[str] = None
+    sold_at: Optional[str] = None
+    created_at: str = Field(default_factory=now)
+
+
+class UnitCreate(BaseModel):
+    project_id: str
+    unit_type_id: Optional[str] = None
+    unit_number: str
+    price: float = 0
+
+
+class MarkSold(BaseModel):
+    buyer_name: str
+    buyer_contact: Optional[str] = ""
+    total_price: Optional[float] = None
+
+
+class Payment(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    payment_id: str = Field(default_factory=lambda: new_id("pay"))
+    project_id: str
+    unit_id: str
+    amount: float
+    mode: Literal["cash", "cheque", "bank_transfer", "upi", "card", "other"] = "bank_transfer"
+    reference: str = ""
+    paid_on: str
+    recorded_by: str
+    created_at: str = Field(default_factory=now)
+
+
+class PaymentCreate(BaseModel):
+    unit_id: str
+    amount: float
+    mode: Literal["cash", "cheque", "bank_transfer", "upi", "card", "other"] = "bank_transfer"
+    reference: str = ""
+    paid_on: str
+
+
+class Expense(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    expense_id: str = Field(default_factory=lambda: new_id("exp"))
+    project_id: str
+    category: str
+    amount: float
+    vendor: str = ""
+    description: str = ""
+    receipt_file_id: Optional[str] = None
+    status: ExpenseStatus = "pending"
+    raised_by: str
+    stage1_by: Optional[str] = None
+    stage1_at: Optional[str] = None
+    final_by: Optional[str] = None
+    final_at: Optional[str] = None
+    rejection_reason: Optional[str] = None
+    rejected_by: Optional[str] = None
+    rejected_at: Optional[str] = None
+    created_at: str = Field(default_factory=now)
+
+
+class ExpenseCreate(BaseModel):
+    project_id: str
+    category: str
+    amount: float
+    vendor: str = ""
+    description: str = ""
+    receipt_file_id: Optional[str] = None
+
+
+class ApprovalAction(BaseModel):
+    action: Literal["approve", "reject"]
+    reason: Optional[str] = None
+
+
+class StockItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    item_id: str = Field(default_factory=lambda: new_id("item"))
+    project_id: str
+    name: str
+    unit: str = "pcs"   # kg, bag, m3, pcs
+    opening: float = 0
+    inward: float = 0
+    outward: float = 0
+    vendor: str = ""
+    created_at: str = Field(default_factory=now)
+
+
+class StockItemCreate(BaseModel):
+    project_id: str
+    name: str
+    unit: str = "pcs"
+    opening: float = 0
+    vendor: str = ""
+
+
+class StockMovement(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    movement_id: str = Field(default_factory=lambda: new_id("mov"))
+    item_id: str
+    project_id: str
+    kind: Literal["inward", "outward"]
+    quantity: float
+    note: str = ""
+    recorded_by: str
+    recorded_at: str = Field(default_factory=now)
+
+
+class StockMovementCreate(BaseModel):
+    item_id: str
+    kind: Literal["inward", "outward"]
+    quantity: float
+    note: str = ""
+
+
+class Settings(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    approval_threshold: float = 50000
+    currency: str = "INR"
+    company_name: str = "Estate OS"
+    updated_at: str = Field(default_factory=now)
+
+
+class Notification(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    notification_id: str = Field(default_factory=lambda: new_id("ntf"))
+    user_id: str
+    kind: str
+    message: str
+    link: Optional[str] = None
+    is_read: bool = False
+    created_at: str = Field(default_factory=now)
+
+
+# ---------------------------------------------------------------- helpers ---
+async def audit(actor_id: str, action: str, entity: str,
+                entity_id: str, meta: dict[str, Any] | None = None):
+    await db.audit_logs.insert_one({
+        "log_id": new_id("log"),
+        "actor_id": actor_id, "action": action, "entity": entity,
+        "entity_id": entity_id, "meta": meta or {}, "created_at": now(),
+    })
+
+
+async def notify(user_id: str, kind: str, message: str,
+                 link: str | None = None):
+    await db.notifications.insert_one(Notification(
+        user_id=user_id, kind=kind, message=message, link=link,
+    ).model_dump())
+
+
+async def get_settings_doc() -> Settings:
+    doc = await db.settings.find_one({"_id": "singleton"})
+    if not doc:
+        s = Settings()
+        d = s.model_dump()
+        d["_id"] = "singleton"
+        await db.settings.insert_one(d)
+        return s
+    doc.pop("_id", None)
+    return Settings(**doc)
+
+
+# ------------------------------------------------------------------ auth ---
+async def get_current_user(
+    authorization: Optional[str] = Header(None),
+    session_token: Optional[str] = Cookie(None),
+) -> User:
+    token = session_token
+    if not token and authorization and authorization.startswith("Bearer "):
+        token = authorization.split(" ", 1)[1]
+    if not token:
+        raise HTTPException(401, "Not authenticated")
+
+    sess = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
+    if not sess:
+        raise HTTPException(401, "Invalid session")
+
+    exp = sess["expires_at"]
+    if isinstance(exp, str):
+        exp = datetime.fromisoformat(exp)
+    if exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    if exp < datetime.now(timezone.utc):
+        raise HTTPException(401, "Session expired")
+
+    user_doc = await db.users.find_one({"user_id": sess["user_id"]}, {"_id": 0})
+    if not user_doc or not user_doc.get("is_active", True):
+        raise HTTPException(401, "User not found or inactive")
+    return User(**user_doc)
+
+
+def require_roles(*roles: Role):
+    async def _dep(user: User = Depends(get_current_user)) -> User:
+        if user.role not in roles:
+            raise HTTPException(403, f"Requires role in {roles}")
+        return user
+    return _dep
+
+
+def user_scope_projects(user: User) -> Optional[List[str]]:
+    """Return None (all projects) or list of project_ids the user can see."""
+    if user.role in ("admin", "accounts", "management"):
+        return None
+    return user.project_ids or []
+
+
+# ------------------------------------------------------ auth endpoints -----
+class SessionExchange(BaseModel):
+    session_id: str
+
+
+@api.post("/auth/session")
+async def exchange_session(payload: SessionExchange, response: Response):
+    """Exchange Emergent session_id for our session_token cookie."""
+    r = requests.get(
+        "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
+        headers={"X-Session-ID": payload.session_id}, timeout=30,
+    )
+    if r.status_code != 200:
+        raise HTTPException(401, "Invalid session id")
+    data = r.json()
+
+    email = data["email"].lower()
+    existing = await db.users.find_one({"email": email}, {"_id": 0})
+
+    user_count = await db.users.count_documents({})
+
+    if not existing:
+        # bootstrap admin if first user, else deny
+        if user_count == 0:
+            role: Role = "admin"
+        else:
+            raise HTTPException(
+                403,
+                "This email is not authorized. Ask your admin to add you.",
+            )
+        user_doc = User(
+            email=email, name=data.get("name") or email,
+            picture=data.get("picture"), role=role,
+        ).model_dump()
+        await db.users.insert_one(user_doc)
+        existing = user_doc
+        await audit(existing["user_id"], "bootstrap_admin", "user",
+                    existing["user_id"], {"email": email})
+    else:
+        if not existing.get("is_active", True):
+            raise HTTPException(403, "Account deactivated")
+        # refresh name/picture on each login
+        await db.users.update_one(
+            {"user_id": existing["user_id"]},
+            {"$set": {"name": data.get("name") or existing["name"],
+                      "picture": data.get("picture")}},
+        )
+
+    token = data["session_token"]
+    await db.user_sessions.update_one(
+        {"session_token": token},
+        {"$set": {
+            "session_token": token,
+            "user_id": existing["user_id"],
+            "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+            "created_at": now(),
+        }},
+        upsert=True,
+    )
+
+    response.set_cookie(
+        key="session_token", value=token, max_age=7 * 24 * 3600,
+        httponly=True, secure=True, samesite="none", path="/",
+    )
+    user_doc = await db.users.find_one({"user_id": existing["user_id"]}, {"_id": 0})
+    return {"user": user_doc, "session_token": token}
+
+
+@api.post("/auth/logout")
+async def logout(response: Response,
+                 authorization: Optional[str] = Header(None),
+                 session_token: Optional[str] = Cookie(None)):
+    token = session_token
+    if not token and authorization and authorization.startswith("Bearer "):
+        token = authorization.split(" ", 1)[1]
+    if token:
+        await db.user_sessions.delete_one({"session_token": token})
+    response.delete_cookie("session_token", path="/")
+    return {"ok": True}
+
+
+@api.get("/auth/me")
+async def me(user: User = Depends(get_current_user)):
+    return user.model_dump()
+
+
+# ------------------------------------------------------ users --------------
+@api.get("/users")
+async def list_users(user: User = Depends(require_roles("admin"))):
+    docs = await db.users.find({}, {"_id": 0}).to_list(1000)
+    return docs
+
+
+@api.post("/users")
+async def create_user(payload: UserCreate,
+                      user: User = Depends(require_roles("admin"))):
+    existing = await db.users.find_one({"email": payload.email.lower()})
+    if existing:
+        raise HTTPException(400, "User with this email already exists")
+    u = User(email=payload.email.lower(), name=payload.name,
+             role=payload.role, project_ids=payload.project_ids)
+    await db.users.insert_one(u.model_dump())
+    await audit(user.user_id, "create_user", "user", u.user_id,
+                {"email": u.email, "role": u.role})
+    return u.model_dump()
+
+
+@api.patch("/users/{user_id}")
+async def update_user(user_id: str, payload: UserUpdate,
+                      user: User = Depends(require_roles("admin"))):
+    update = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if not update:
+        raise HTTPException(400, "Nothing to update")
+    r = await db.users.update_one({"user_id": user_id}, {"$set": update})
+    if r.matched_count == 0:
+        raise HTTPException(404, "User not found")
+    await audit(user.user_id, "update_user", "user", user_id, update)
+    doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    return doc
+
+
+@api.delete("/users/{user_id}")
+async def deactivate_user(user_id: str,
+                          user: User = Depends(require_roles("admin"))):
+    r = await db.users.update_one({"user_id": user_id},
+                                  {"$set": {"is_active": False}})
+    if r.matched_count == 0:
+        raise HTTPException(404, "User not found")
+    await audit(user.user_id, "deactivate_user", "user", user_id, {})
+    return {"ok": True}
+
+
+# ------------------------------------------------------ projects -----------
+@api.get("/projects")
+async def list_projects(user: User = Depends(get_current_user)):
+    q = {}
+    scope = user_scope_projects(user)
+    if scope is not None:
+        q["project_id"] = {"$in": scope}
+    docs = await db.projects.find(q, {"_id": 0}).to_list(1000)
+    return docs
+
+
+@api.post("/projects")
+async def create_project(payload: ProjectCreate,
+                         user: User = Depends(require_roles("admin"))):
+    p = Project(**payload.model_dump())
+    await db.projects.insert_one(p.model_dump())
+    await audit(user.user_id, "create_project", "project", p.project_id,
+                payload.model_dump())
+    return p.model_dump()
+
+
+@api.patch("/projects/{project_id}")
+async def update_project(project_id: str, payload: ProjectCreate,
+                         user: User = Depends(require_roles("admin"))):
+    upd = payload.model_dump()
+    r = await db.projects.update_one({"project_id": project_id}, {"$set": upd})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Project not found")
+    await audit(user.user_id, "update_project", "project", project_id, upd)
+    return await db.projects.find_one({"project_id": project_id}, {"_id": 0})
+
+
+@api.get("/projects/{project_id}/impact")
+async def project_impact(project_id: str,
+                         user: User = Depends(require_roles("admin"))):
+    users = await db.users.count_documents({"project_ids": project_id})
+    units = await db.units.count_documents({"project_id": project_id})
+    payments = await db.payments.count_documents({"project_id": project_id})
+    expenses = await db.expenses.count_documents({"project_id": project_id})
+    stock = await db.stock_items.count_documents({"project_id": project_id})
+    return {"users": users, "units": units, "payments": payments,
+            "expenses": expenses, "stock_items": stock}
+
+
+@api.delete("/projects/{project_id}")
+async def delete_project(project_id: str,
+                         user: User = Depends(require_roles("admin"))):
+    n_users = await db.users.count_documents({"project_ids": project_id})
+    if n_users > 0:
+        raise HTTPException(
+            400, f"Cannot delete: {n_users} user(s) still assigned")
+    await db.projects.delete_one({"project_id": project_id})
+    await db.units.delete_many({"project_id": project_id})
+    await db.unit_types.delete_many({"project_id": project_id})
+    await db.payments.delete_many({"project_id": project_id})
+    await db.expenses.delete_many({"project_id": project_id})
+    await db.stock_items.delete_many({"project_id": project_id})
+    await db.stock_movements.delete_many({"project_id": project_id})
+    await audit(user.user_id, "delete_project", "project", project_id, {})
+    return {"ok": True}
+
+
+# ------------------------------------------------------ unit types ---------
+@api.get("/unit-types")
+async def list_unit_types(project_id: Optional[str] = None,
+                          user: User = Depends(get_current_user)):
+    q: dict = {}
+    if project_id:
+        q["project_id"] = project_id
+    scope = user_scope_projects(user)
+    if scope is not None:
+        q["project_id"] = {"$in": scope} if not project_id else project_id
+    docs = await db.unit_types.find(q, {"_id": 0}).to_list(1000)
+    return docs
+
+
+@api.post("/unit-types")
+async def create_unit_type(payload: UnitTypeCreate,
+                           user: User = Depends(require_roles("admin"))):
+    ut = UnitType(**payload.model_dump())
+    await db.unit_types.insert_one(ut.model_dump())
+    return ut.model_dump()
+
+
+# ------------------------------------------------------ units --------------
+@api.get("/units")
+async def list_units(project_id: Optional[str] = None,
+                     user: User = Depends(get_current_user)):
+    q: dict = {}
+    if project_id:
+        q["project_id"] = project_id
+    scope = user_scope_projects(user)
+    if scope is not None:
+        if project_id and project_id not in scope:
+            return []
+        if not project_id:
+            q["project_id"] = {"$in": scope}
+    docs = await db.units.find(q, {"_id": 0}).to_list(2000)
+    return docs
+
+
+@api.post("/units")
+async def create_unit(payload: UnitCreate,
+                      user: User = Depends(require_roles("admin"))):
+    u = Unit(**payload.model_dump())
+    await db.units.insert_one(u.model_dump())
+    return u.model_dump()
+
+
+@api.post("/units/{unit_id}/sell")
+async def mark_sold(unit_id: str, payload: MarkSold,
+                    user: User = Depends(require_roles("admin"))):
+    unit = await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
+    if not unit:
+        raise HTTPException(404, "Unit not found")
+    upd = {"status": "sold", "buyer_name": payload.buyer_name,
+           "buyer_contact": payload.buyer_contact or "", "sold_at": now()}
+    if payload.total_price is not None:
+        upd["price"] = payload.total_price
+    await db.units.update_one({"unit_id": unit_id}, {"$set": upd})
+    await audit(user.user_id, "sell_unit", "unit", unit_id, upd)
+    return await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
+
+
+@api.post("/units/{unit_id}/cancel")
+async def cancel_sale(unit_id: str,
+                      user: User = Depends(require_roles("admin"))):
+    unit = await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
+    if not unit:
+        raise HTTPException(404, "Unit not found")
+    await db.units.update_one({"unit_id": unit_id},
+                              {"$set": {"status": "cancelled"}})
+    await audit(user.user_id, "cancel_sale", "unit", unit_id, {})
+    return {"ok": True}
+
+
+# ------------------------------------------------------ payments -----------
+@api.get("/payments")
+async def list_payments(project_id: Optional[str] = None,
+                        unit_id: Optional[str] = None,
+                        user: User = Depends(get_current_user)):
+    q: dict = {}
+    if project_id:
+        q["project_id"] = project_id
+    if unit_id:
+        q["unit_id"] = unit_id
+    scope = user_scope_projects(user)
+    if scope is not None:
+        if not project_id:
+            q["project_id"] = {"$in": scope}
+    docs = await db.payments.find(q, {"_id": 0}).sort("paid_on", -1).to_list(2000)
+    return docs
+
+
+@api.post("/payments")
+async def create_payment(payload: PaymentCreate,
+                         user: User = Depends(require_roles("admin", "accounts"))):
+    unit = await db.units.find_one({"unit_id": payload.unit_id}, {"_id": 0})
+    if not unit:
+        raise HTTPException(404, "Unit not found")
+    p = Payment(project_id=unit["project_id"],
+                unit_id=payload.unit_id, amount=payload.amount,
+                mode=payload.mode, reference=payload.reference,
+                paid_on=payload.paid_on, recorded_by=user.user_id)
+    await db.payments.insert_one(p.model_dump())
+    await audit(user.user_id, "record_payment", "payment", p.payment_id,
+                {"unit": payload.unit_id, "amount": payload.amount})
+    return p.model_dump()
+
+
+@api.get("/revenue/summary")
+async def revenue_summary(project_id: Optional[str] = None,
+                          user: User = Depends(get_current_user)):
+    scope = user_scope_projects(user)
+    unit_q: dict = {}
+    if project_id:
+        unit_q["project_id"] = project_id
+    elif scope is not None:
+        unit_q["project_id"] = {"$in": scope}
+    units = await db.units.find(unit_q, {"_id": 0}).to_list(5000)
+    unit_ids = [u["unit_id"] for u in units]
+
+    pay_q: dict = {"unit_id": {"$in": unit_ids}}
+    payments = await db.payments.find(pay_q, {"_id": 0}).to_list(10000)
+
+    accrued = sum(u["price"] for u in units if u["status"] == "sold")
+    received = sum(p["amount"] for p in payments)
+    receivable = accrued - received
+
+    by_unit = {}
+    for u in units:
+        by_unit[u["unit_id"]] = {
+            "unit_id": u["unit_id"],
+            "unit_number": u["unit_number"],
+            "project_id": u["project_id"],
+            "status": u["status"],
+            "accrued": u["price"] if u["status"] == "sold" else 0,
+            "received": 0,
+        }
+    for p in payments:
+        if p["unit_id"] in by_unit:
+            by_unit[p["unit_id"]]["received"] += p["amount"]
+    for row in by_unit.values():
+        row["receivable"] = row["accrued"] - row["received"]
+
+    return {"accrued": accrued, "received": received,
+            "receivable": receivable,
+            "by_unit": list(by_unit.values())}
+
+
+# ------------------------------------------------------ expenses -----------
+@api.get("/expenses")
+async def list_expenses(project_id: Optional[str] = None,
+                        status: Optional[ExpenseStatus] = None,
+                        user: User = Depends(get_current_user)):
+    q: dict = {}
+    if project_id:
+        q["project_id"] = project_id
+    if status:
+        q["status"] = status
+    scope = user_scope_projects(user)
+    if scope is not None:
+        if not project_id:
+            q["project_id"] = {"$in": scope}
+    if user.role == "site_manager":
+        # site managers see only their own + their projects
+        q["project_id"] = q.get("project_id", {"$in": user.project_ids})
+    docs = await db.expenses.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    return docs
+
+
+@api.post("/expenses")
+async def raise_expense(payload: ExpenseCreate,
+                        user: User = Depends(require_roles(
+                            "site_manager", "admin"))):
+    if user.role == "site_manager" and payload.project_id not in user.project_ids:
+        raise HTTPException(403, "You are not assigned to this project")
+    e = Expense(**payload.model_dump(), raised_by=user.user_id)
+    await db.expenses.insert_one(e.model_dump())
+    await audit(user.user_id, "raise_expense", "expense", e.expense_id,
+                {"amount": payload.amount})
+    # notify accounts users
+    async for acc in db.users.find({"role": "accounts", "is_active": True},
+                                   {"_id": 0}):
+        await notify(acc["user_id"], "expense_new",
+                     f"New expense ₹{payload.amount:,.0f} pending Stage-1",
+                     link=f"/expenses/{e.expense_id}")
+    return e.model_dump()
+
+
+@api.post("/expenses/{expense_id}/stage1")
+async def stage1(expense_id: str, payload: ApprovalAction,
+                 user: User = Depends(require_roles("accounts", "admin"))):
+    exp = await db.expenses.find_one({"expense_id": expense_id}, {"_id": 0})
+    if not exp:
+        raise HTTPException(404, "Expense not found")
+    if exp["status"] != "pending":
+        raise HTTPException(400, "Expense not in pending state")
+
+    settings = await get_settings_doc()
+    threshold = settings.approval_threshold
+
+    if payload.action == "reject":
+        if not payload.reason:
+            raise HTTPException(400, "Rejection reason required")
+        upd = {"status": "rejected", "rejection_reason": payload.reason,
+               "rejected_by": user.user_id, "rejected_at": now()}
+    else:
+        if exp["amount"] > threshold:
+            upd = {"status": "stage1_approved",
+                   "stage1_by": user.user_id, "stage1_at": now()}
+        else:
+            upd = {"status": "final_approved",
+                   "stage1_by": user.user_id, "stage1_at": now(),
+                   "final_by": user.user_id, "final_at": now()}
+
+    await db.expenses.update_one({"expense_id": expense_id}, {"$set": upd})
+    await audit(user.user_id, "stage1", "expense", expense_id, upd)
+    if upd["status"] == "stage1_approved":
+        async for m in db.users.find({"role": "management", "is_active": True},
+                                     {"_id": 0}):
+            await notify(m["user_id"], "expense_stage1",
+                         f"Expense ₹{exp['amount']:,.0f} needs final approval",
+                         link=f"/expenses/{expense_id}")
+    else:
+        await notify(exp["raised_by"], "expense_result",
+                     f"Your expense is {upd['status'].replace('_', ' ')}",
+                     link=f"/expenses/{expense_id}")
+    return await db.expenses.find_one({"expense_id": expense_id}, {"_id": 0})
+
+
+@api.post("/expenses/{expense_id}/final")
+async def final_approve(expense_id: str, payload: ApprovalAction,
+                        user: User = Depends(require_roles("management", "admin"))):
+    exp = await db.expenses.find_one({"expense_id": expense_id}, {"_id": 0})
+    if not exp:
+        raise HTTPException(404, "Expense not found")
+    if exp["status"] != "stage1_approved":
+        raise HTTPException(400, "Expense not awaiting final approval")
+
+    if payload.action == "reject":
+        if not payload.reason:
+            raise HTTPException(400, "Rejection reason required")
+        upd = {"status": "rejected", "rejection_reason": payload.reason,
+               "rejected_by": user.user_id, "rejected_at": now()}
+    else:
+        upd = {"status": "final_approved",
+               "final_by": user.user_id, "final_at": now()}
+
+    await db.expenses.update_one({"expense_id": expense_id}, {"$set": upd})
+    await audit(user.user_id, "final", "expense", expense_id, upd)
+    await notify(exp["raised_by"], "expense_result",
+                 f"Your expense is {upd['status'].replace('_', ' ')}",
+                 link=f"/expenses/{expense_id}")
+    return await db.expenses.find_one({"expense_id": expense_id}, {"_id": 0})
+
+
+# ------------------------------------------------------ stock --------------
+@api.get("/stock/items")
+async def list_stock_items(project_id: Optional[str] = None,
+                           user: User = Depends(get_current_user)):
+    q: dict = {}
+    if project_id:
+        q["project_id"] = project_id
+    scope = user_scope_projects(user)
+    if scope is not None:
+        if not project_id:
+            q["project_id"] = {"$in": scope}
+    items = await db.stock_items.find(q, {"_id": 0}).to_list(2000)
+    for it in items:
+        it["closing"] = (it.get("opening", 0)
+                         + it.get("inward", 0) - it.get("outward", 0))
+    return items
+
+
+@api.post("/stock/items")
+async def create_stock_item(payload: StockItemCreate,
+                            user: User = Depends(require_roles(
+                                "admin", "site_manager"))):
+    if user.role == "site_manager" and payload.project_id not in user.project_ids:
+        raise HTTPException(403, "Project not in your scope")
+    it = StockItem(**payload.model_dump())
+    await db.stock_items.insert_one(it.model_dump())
+    return it.model_dump()
+
+
+@api.post("/stock/movements")
+async def add_movement(payload: StockMovementCreate,
+                       user: User = Depends(require_roles(
+                           "admin", "site_manager"))):
+    item = await db.stock_items.find_one({"item_id": payload.item_id}, {"_id": 0})
+    if not item:
+        raise HTTPException(404, "Item not found")
+    if (user.role == "site_manager"
+            and item["project_id"] not in user.project_ids):
+        raise HTTPException(403, "Project not in your scope")
+    mv = StockMovement(item_id=payload.item_id,
+                       project_id=item["project_id"],
+                       kind=payload.kind, quantity=payload.quantity,
+                       note=payload.note, recorded_by=user.user_id)
+    await db.stock_movements.insert_one(mv.model_dump())
+    inc = {"inward": payload.quantity} if payload.kind == "inward" \
+        else {"outward": payload.quantity}
+    await db.stock_items.update_one({"item_id": payload.item_id},
+                                    {"$inc": inc})
+    await audit(user.user_id, f"stock_{payload.kind}", "stock_item",
+                payload.item_id, {"qty": payload.quantity})
+    return mv.model_dump()
+
+
+@api.get("/stock/movements")
+async def list_movements(item_id: Optional[str] = None,
+                         project_id: Optional[str] = None,
+                         user: User = Depends(get_current_user)):
+    q: dict = {}
+    if item_id:
+        q["item_id"] = item_id
+    if project_id:
+        q["project_id"] = project_id
+    return await db.stock_movements.find(q, {"_id": 0}).sort(
+        "recorded_at", -1).to_list(2000)
+
+
+# ------------------------------------------------------ settings -----------
+@api.get("/settings")
+async def read_settings(user: User = Depends(get_current_user)):
+    s = await get_settings_doc()
+    return s.model_dump()
+
+
+class SettingsUpdate(BaseModel):
+    approval_threshold: Optional[float] = None
+    currency: Optional[str] = None
+    company_name: Optional[str] = None
+
+
+@api.patch("/settings")
+async def update_settings(payload: SettingsUpdate,
+                          user: User = Depends(require_roles("admin"))):
+    upd = {k: v for k, v in payload.model_dump().items() if v is not None}
+    upd["updated_at"] = now()
+    await db.settings.update_one({"_id": "singleton"}, {"$set": upd},
+                                 upsert=True)
+    await audit(user.user_id, "update_settings", "settings", "singleton", upd)
+    return (await get_settings_doc()).model_dump()
+
+
+# ------------------------------------------------------ notifications -----
+@api.get("/notifications")
+async def my_notifications(user: User = Depends(get_current_user)):
+    return await db.notifications.find(
+        {"user_id": user.user_id}, {"_id": 0}
+    ).sort("created_at", -1).limit(50).to_list(50)
+
+
+@api.post("/notifications/{nid}/read")
+async def mark_read(nid: str, user: User = Depends(get_current_user)):
+    await db.notifications.update_one(
+        {"notification_id": nid, "user_id": user.user_id},
+        {"$set": {"is_read": True}})
+    return {"ok": True}
+
+
+@api.post("/notifications/read-all")
+async def mark_all_read(user: User = Depends(get_current_user)):
+    await db.notifications.update_many(
+        {"user_id": user.user_id, "is_read": False},
+        {"$set": {"is_read": True}})
+    return {"ok": True}
+
+
+# ------------------------------------------------------ audit log ---------
+@api.get("/audit-logs")
+async def audit_logs(user: User = Depends(require_roles("admin"))):
+    return await db.audit_logs.find({}, {"_id": 0}).sort(
+        "created_at", -1).limit(500).to_list(500)
+
+
+# ------------------------------------------------------ files -------------
+@api.post("/files/upload")
+async def upload_file(file: UploadFile = File(...),
+                      user: User = Depends(get_current_user)):
+    data = await file.read()
+    ext = (file.filename or "bin").split(".")[-1].lower()
+    file_id = new_id("file")
+    path = f"{APP_NAME}/uploads/{user.user_id}/{file_id}.{ext}"
+    result = put_object(path, data, file.content_type or "application/octet-stream")
+    doc = {
+        "file_id": file_id,
+        "storage_path": result["path"],
+        "original_filename": file.filename,
+        "content_type": file.content_type,
+        "size": result.get("size", len(data)),
+        "uploaded_by": user.user_id,
+        "is_deleted": False,
+        "created_at": now(),
+    }
+    await db.files.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/files/{file_id}/download")
+async def download_file(file_id: str,
+                        user: User = Depends(get_current_user)):
+    rec = await db.files.find_one({"file_id": file_id, "is_deleted": False},
+                                  {"_id": 0})
+    if not rec:
+        raise HTTPException(404, "File not found")
+    data, ct = get_object(rec["storage_path"])
+    return Response(content=data,
+                    media_type=rec.get("content_type") or ct,
+                    headers={"Content-Disposition":
+                             f'inline; filename="{rec["original_filename"]}"'})
+
+
+# ------------------------------------------------------ analytics ---------
+@api.get("/dashboard/summary")
+async def dashboard_summary(project_id: Optional[str] = None,
+                            user: User = Depends(get_current_user)):
+    scope = user_scope_projects(user)
+    unit_q: dict = {}
+    exp_q: dict = {}
+    stock_q: dict = {}
+    if project_id:
+        unit_q["project_id"] = project_id
+        exp_q["project_id"] = project_id
+        stock_q["project_id"] = project_id
+    elif scope is not None:
+        unit_q["project_id"] = {"$in": scope}
+        exp_q["project_id"] = {"$in": scope}
+        stock_q["project_id"] = {"$in": scope}
+
+    total = await db.units.count_documents(unit_q)
+    sold = await db.units.count_documents({**unit_q, "status": "sold"})
+    available = await db.units.count_documents({**unit_q, "status": "available"})
+    reserved = await db.units.count_documents({**unit_q, "status": "reserved"})
+
+    units = await db.units.find(unit_q, {"_id": 0}).to_list(5000)
+    accrued = sum(u["price"] for u in units if u["status"] == "sold")
+    unit_ids = [u["unit_id"] for u in units]
+    payments = await db.payments.find(
+        {"unit_id": {"$in": unit_ids}}, {"_id": 0}
+    ).to_list(10000)
+    received = sum(p["amount"] for p in payments)
+
+    projects_q: dict = {}
+    if project_id:
+        projects_q["project_id"] = project_id
+    elif scope is not None:
+        projects_q["project_id"] = {"$in": scope}
+    projects = await db.projects.find(projects_q, {"_id": 0}).to_list(500)
+    target = sum(p.get("target_revenue", 0) for p in projects)
+
+    pending = await db.expenses.count_documents({**exp_q, "status": "pending"})
+    stage1 = await db.expenses.count_documents(
+        {**exp_q, "status": "stage1_approved"})
+    approved = await db.expenses.count_documents(
+        {**exp_q, "status": "final_approved"})
+    rejected = await db.expenses.count_documents(
+        {**exp_q, "status": "rejected"})
+
+    approved_amt = 0.0
+    async for e in db.expenses.find({**exp_q, "status": "final_approved"},
+                                    {"_id": 0}):
+        approved_amt += e["amount"]
+
+    # expense trend last 30 days
+    from collections import defaultdict
+    by_day: dict[str, float] = defaultdict(float)
+    async for e in db.expenses.find({**exp_q, "status": "final_approved"},
+                                    {"_id": 0}):
+        d = (e.get("final_at") or e["created_at"])[:10]
+        by_day[d] += e["amount"]
+    trend = [{"date": d, "amount": v} for d, v in sorted(by_day.items())][-30:]
+
+    return {
+        "units": {"total": total, "sold": sold, "available": available,
+                  "reserved": reserved},
+        "revenue": {"accrued": accrued, "received": received,
+                    "receivable": accrued - received, "target": target},
+        "expenses": {"pending": pending, "stage1": stage1,
+                     "approved": approved, "rejected": rejected,
+                     "approved_amount": approved_amt},
+        "expense_trend": trend,
+        "projects_count": len(projects),
+    }
+
+
+# ------------------------------------------------------ search ------------
+@api.get("/search")
+async def global_search(q: str, user: User = Depends(get_current_user)):
+    if not q:
+        return {"projects": [], "units": [], "expenses": []}
+    scope = user_scope_projects(user)
+    proj_q = {"name": {"$regex": q, "$options": "i"}}
+    if scope is not None:
+        proj_q["project_id"] = {"$in": scope}
+    projects = await db.projects.find(proj_q, {"_id": 0}).limit(10).to_list(10)
+
+    unit_q = {"unit_number": {"$regex": q, "$options": "i"}}
+    if scope is not None:
+        unit_q["project_id"] = {"$in": scope}
+    units = await db.units.find(unit_q, {"_id": 0}).limit(10).to_list(10)
+
+    exp_q = {"$or": [{"category": {"$regex": q, "$options": "i"}},
+                     {"vendor": {"$regex": q, "$options": "i"}}]}
+    if scope is not None:
+        exp_q["project_id"] = {"$in": scope}
+    expenses = await db.expenses.find(exp_q, {"_id": 0}).limit(10).to_list(10)
+    return {"projects": projects, "units": units, "expenses": expenses}
+
+
+# ------------------------------------------------------ excel -------------
+IMPORT_SHEETS = {
+    "projects": ["name", "location", "description", "target_revenue"],
+    "units": ["project_id", "unit_type", "unit_number", "price"],
+    "stock_items": ["project_id", "name", "unit", "opening", "vendor"],
+}
+
+
+@api.get("/excel/template/{kind}")
+async def excel_template(kind: str,
+                         user: User = Depends(require_roles("admin"))):
+    if kind not in IMPORT_SHEETS:
+        raise HTTPException(400, "Unknown template kind")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = kind
+    ws.append(IMPORT_SHEETS[kind])
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition":
+                 f'attachment; filename="template_{kind}.xlsx"'})
+
+
+@api.post("/excel/import/{kind}")
+async def excel_import(kind: str, file: UploadFile = File(...),
+                       user: User = Depends(require_roles("admin"))):
+    if kind not in IMPORT_SHEETS:
+        raise HTTPException(400, "Unknown import kind")
+    wb = load_workbook(io.BytesIO(await file.read()))
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        raise HTTPException(400, "Empty workbook")
+    header = [str(c).strip() if c else "" for c in rows[0]]
+    expected = IMPORT_SHEETS[kind]
+    if header[:len(expected)] != expected:
+        raise HTTPException(
+            400, f"Header mismatch. Expected: {expected}")
+
+    inserted = 0
+    errors: list[dict] = []
+    for i, row in enumerate(rows[1:], start=2):
+        try:
+            data = dict(zip(expected, row))
+            if kind == "projects":
+                if not data.get("name"):
+                    raise ValueError("name required")
+                p = Project(
+                    name=str(data["name"]),
+                    location=str(data.get("location") or ""),
+                    description=str(data.get("description") or ""),
+                    target_revenue=float(data.get("target_revenue") or 0),
+                )
+                await db.projects.insert_one(p.model_dump())
+            elif kind == "units":
+                pid = str(data.get("project_id") or "")
+                if not pid or not await db.projects.find_one({"project_id": pid}):
+                    raise ValueError("invalid project_id")
+                utype_name = str(data.get("unit_type") or "").strip()
+                ut_id = None
+                if utype_name:
+                    ut = await db.unit_types.find_one(
+                        {"project_id": pid, "name": utype_name}, {"_id": 0})
+                    if not ut:
+                        ut_new = UnitType(project_id=pid, name=utype_name)
+                        await db.unit_types.insert_one(ut_new.model_dump())
+                        ut_id = ut_new.unit_type_id
+                    else:
+                        ut_id = ut["unit_type_id"]
+                u = Unit(project_id=pid, unit_type_id=ut_id,
+                         unit_number=str(data.get("unit_number") or ""),
+                         price=float(data.get("price") or 0))
+                await db.units.insert_one(u.model_dump())
+            elif kind == "stock_items":
+                pid = str(data.get("project_id") or "")
+                if not pid or not await db.projects.find_one({"project_id": pid}):
+                    raise ValueError("invalid project_id")
+                it = StockItem(
+                    project_id=pid,
+                    name=str(data.get("name") or ""),
+                    unit=str(data.get("unit") or "pcs"),
+                    opening=float(data.get("opening") or 0),
+                    vendor=str(data.get("vendor") or ""),
+                )
+                await db.stock_items.insert_one(it.model_dump())
+            inserted += 1
+        except Exception as e:
+            errors.append({"row": i, "error": str(e)})
+    await audit(user.user_id, "excel_import", kind, "-",
+                {"inserted": inserted, "errors": len(errors)})
+    return {"inserted": inserted, "errors": errors}
+
+
+# ------------------------------------------------------ mount -------------
+app.include_router(api)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+
+@app.on_event("startup")
+async def startup():
+    init_storage()
+    log.info("Backend started")
+
 
 @app.on_event("shutdown")
-async def shutdown_db_client():
+async def shutdown():
     client.close()
