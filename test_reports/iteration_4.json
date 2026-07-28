@@ -1,0 +1,27 @@
+{
+  "summary": "Iteration-4 targeted regression on the auth bootstrap/gate fix (empty users → first login becomes admin; otherwise reject). Wrote /app/backend/tests/backend_test_iter4_auth.py that runs IN-PROCESS via FastAPI TestClient and monkeypatches server.requests.get to simulate Emergent OAuth session-data responses. 9/9 tests passed. All 9 scenarios in the review request are covered and verified. Post-test cleanup restores db.users to empty so the user's real Google login will still trigger bootstrap.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/backend_test_iter4_auth.py",
+    "/app/test_reports/pytest/iter4_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "exchange_session refreshes name/picture on every login but does NOT re-validate is_active before that update — actually it does check via `if not existing.get('is_active', True): raise 403`. OK.",
+    "get_current_user rejects inactive users with 401 'User not found or inactive' — arguably should be 403 for deactivated (semantic), but current behavior is acceptable since the user's session should be cleared anyway.",
+    "The bootstrap admin rule uses `user_count == 0` at request time. If two brand-new users hit /api/auth/session concurrently before either commits, BOTH could become admin (race). Consider a Mongo unique index on users.email + an atomic 'first_admin_locked' flag in settings, or a $setOnInsert bootstrap. Low probability but worth noting.",
+    "session_token cookie uses SameSite=None + Secure. Since the app is served over HTTPS this is correct; on plain http localhost the cookie will be silently dropped by browsers — testers using localhost:3000 without HTTPS proxy will only get Bearer-token auth to work, not cookie auth. Not a bug for production/preview.",
+    "requests.get to demobackend.emergentagent.com has no retry/backoff and 30s timeout — a slow Emergent responder blocks the login handler. Consider async httpx with tighter timeout + one retry."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test_iter4_auth.py (new)"
+  ],
+  "success_rate": {"backend": "100% (9/9)", "frontend": "not tested (skip requested)"},
+  "test_credentials": "N/A — tests monkeypatch requests.get; no real Google login used. DB users collection is empty after test cleanup (the fix condition is preserved).",
+  "seed_data_creation": "None — tests create ephemeral users (newadmin@example.com, invitee@example.com) and delete them in teardown. Demo projects (4) and units (106) untouched.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "backend_test_iter4_auth.py is idempotent: it asserts empty users at start and cleans up after. If a real user has bootstrapped in-between runs, test_00 will fail and you should NOT re-wipe production data — instead update the test to use a different bootstrap email or skip. Prev iter tests (iter1/2/3) are unaffected.",
+  "rca of the issue": "Original bug: 5 pre-seeded fake users made users.count()>0, so any real Google login hit the 'not authorized' 403 branch. Fix: purge users + user_sessions collections while preserving demo business data. This iteration verifies (a) bootstrap works when users empty, (b) subsequent unknown emails are rejected, (c) invited users can log in, (d) deactivated users cannot, (e) name refresh on re-login, (f) expired session returns 401, (g) cookie flags are correct, (h) demo data (projects/units) still present."
+}
