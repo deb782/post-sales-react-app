@@ -327,6 +327,64 @@ class Notification(BaseModel):
     created_at: str = Field(default_factory=now)
 
 
+PeriodType = Literal["monthly", "quarterly"]
+
+
+class RevenueTarget(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    target_id: str = Field(default_factory=lambda: new_id("tgt"))
+    project_id: str
+    period_type: PeriodType
+    period_key: str   # "YYYY-MM" or "YYYY-Qn"
+    amount: float
+    created_by: Optional[str] = None
+    created_at: str = Field(default_factory=now)
+
+
+class RevenueTargetCreate(BaseModel):
+    project_id: str
+    period_type: PeriodType
+    period_key: str
+    amount: float
+
+
+def period_key_of(iso_dt: str, kind: PeriodType) -> str:
+    d = datetime.fromisoformat(iso_dt.replace("Z", "+00:00"))
+    if kind == "monthly":
+        return d.strftime("%Y-%m")
+    q = (d.month - 1) // 3 + 1
+    return f"{d.year}-Q{q}"
+
+
+def current_period_keys() -> dict[str, str]:
+    today = datetime.now(timezone.utc)
+    q = (today.month - 1) // 3 + 1
+    return {"monthly": today.strftime("%Y-%m"),
+            "quarterly": f"{today.year}-Q{q}"}
+
+
+def prior_period_keys(kind: PeriodType, count: int) -> list[str]:
+    """Return list of most recent `count` period keys (oldest first, including current)."""
+    today = datetime.now(timezone.utc).replace(day=1)
+    keys: list[str] = []
+    if kind == "monthly":
+        d = today
+        for _ in range(count):
+            keys.append(d.strftime("%Y-%m"))
+            # step back one month
+            d = (d - timedelta(days=1)).replace(day=1)
+    else:
+        y = today.year
+        q = (today.month - 1) // 3 + 1
+        for _ in range(count):
+            keys.append(f"{y}-Q{q}")
+            q -= 1
+            if q == 0:
+                q = 4
+                y -= 1
+    return list(reversed(keys))
+
+
 # ---------------------------------------------------------------- helpers ---
 async def audit(actor_id: str, action: str, entity: str,
                 entity_id: str, meta: dict[str, Any] | None = None):
@@ -809,6 +867,150 @@ async def revenue_summary(project_id: Optional[str] = None,
             "by_unit": list(by_unit.values())}
 
 
+# ------------------------------------------------------ revenue targets ---
+async def _compute_period_actuals(scope_pids: list[str],
+                                  period_type: PeriodType,
+                                  keys: list[str]) -> dict[str, dict]:
+    """
+    Return {period_key: {received: X, accrued: Y}} across given projects.
+    - received = sum(payment.amount) where payment.project_id in scope
+      and payment.paid_on falls in that period.
+    - accrued = sum(unit.price) where unit.status=sold and unit.sold_at
+      falls in that period.
+    """
+    out: dict[str, dict] = {k: {"received": 0.0, "accrued": 0.0} for k in keys}
+    key_set = set(keys)
+
+    pay_q: dict = {}
+    if scope_pids:
+        pay_q["project_id"] = {"$in": scope_pids}
+    async for p in db.payments.find(pay_q, {"_id": 0}):
+        if not p.get("paid_on"):
+            continue
+        k = period_key_of(p["paid_on"], period_type)
+        if k in key_set:
+            out[k]["received"] += p["amount"]
+
+    unit_q: dict = {"status": "sold"}
+    if scope_pids:
+        unit_q["project_id"] = {"$in": scope_pids}
+    async for u in db.units.find(unit_q, {"_id": 0}):
+        if not u.get("sold_at"):
+            continue
+        k = period_key_of(u["sold_at"], period_type)
+        if k in key_set:
+            out[k]["accrued"] += u.get("price", 0)
+    return out
+
+
+async def _sum_targets(scope_pids: list[str],
+                       period_type: PeriodType,
+                       keys: list[str]) -> dict[str, float]:
+    q: dict = {"period_type": period_type, "period_key": {"$in": keys}}
+    if scope_pids:
+        q["project_id"] = {"$in": scope_pids}
+    totals: dict[str, float] = {k: 0.0 for k in keys}
+    async for t in db.revenue_targets.find(q, {"_id": 0}):
+        totals[t["period_key"]] = totals.get(t["period_key"], 0.0) + t["amount"]
+    return totals
+
+
+def _resolve_scope(user: User, project_id: Optional[str]) -> list[str] | None:
+    """Return concrete list of project ids to filter by, or None = no filter."""
+    scope = user_scope_projects(user)
+    if project_id:
+        if scope is not None and project_id not in scope:
+            return []
+        return [project_id]
+    return scope  # may be None
+
+
+@api.get("/revenue-targets")
+async def list_targets(project_id: Optional[str] = None,
+                       period_type: Optional[PeriodType] = None,
+                       user: User = Depends(get_current_user)):
+    q: dict = {}
+    scope = _resolve_scope(user, project_id)
+    if scope is not None:
+        if not scope:
+            return []
+        q["project_id"] = {"$in": scope}
+    if period_type:
+        q["period_type"] = period_type
+    docs = await db.revenue_targets.find(q, {"_id": 0}).sort("period_key", -1).to_list(500)
+    return docs
+
+
+@api.post("/revenue-targets")
+async def upsert_target(payload: RevenueTargetCreate,
+                        user: User = Depends(require_roles("admin"))):
+    if not await db.projects.find_one({"project_id": payload.project_id}):
+        raise HTTPException(404, "Project not found")
+    existing = await db.revenue_targets.find_one({
+        "project_id": payload.project_id,
+        "period_type": payload.period_type,
+        "period_key": payload.period_key,
+    }, {"_id": 0})
+    if existing:
+        await db.revenue_targets.update_one(
+            {"target_id": existing["target_id"]},
+            {"$set": {"amount": payload.amount}},
+        )
+        await audit(user.user_id, "update_target", "revenue_target",
+                    existing["target_id"], {"amount": payload.amount})
+        return await db.revenue_targets.find_one(
+            {"target_id": existing["target_id"]}, {"_id": 0})
+    t = RevenueTarget(**payload.model_dump(), created_by=user.user_id)
+    await db.revenue_targets.insert_one(t.model_dump())
+    await audit(user.user_id, "create_target", "revenue_target", t.target_id,
+                payload.model_dump())
+    return t.model_dump()
+
+
+@api.delete("/revenue-targets/{target_id}")
+async def delete_target(target_id: str,
+                        user: User = Depends(require_roles("admin"))):
+    r = await db.revenue_targets.delete_one({"target_id": target_id})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Target not found")
+    await audit(user.user_id, "delete_target", "revenue_target", target_id, {})
+    return {"ok": True}
+
+
+@api.get("/revenue-targets/variance")
+async def target_variance(project_id: Optional[str] = None,
+                          period_type: PeriodType = "monthly",
+                          periods: int = 6,
+                          user: User = Depends(get_current_user)):
+    periods = max(1, min(24, periods))
+    scope = _resolve_scope(user, project_id)
+    # convert None (all visible) to actual list by expanding
+    if scope is None:
+        all_projs = await db.projects.find({}, {"_id": 0, "project_id": 1}).to_list(2000)
+        pids = [p["project_id"] for p in all_projs]
+    else:
+        pids = scope
+    keys = prior_period_keys(period_type, periods)
+    targets = await _sum_targets(pids, period_type, keys)
+    actuals = await _compute_period_actuals(pids, period_type, keys)
+    series = []
+    for k in keys:
+        t = targets.get(k, 0.0)
+        rec = actuals[k]["received"]
+        acc = actuals[k]["accrued"]
+        series.append({
+            "period_key": k,
+            "target": t,
+            "received": rec,
+            "accrued": acc,
+            "variance_received": rec - t,
+            "variance_accrued": acc - t,
+            "variance_received_pct": None if t == 0 else round(((rec - t) / t) * 100, 1),
+            "variance_accrued_pct": None if t == 0 else round(((acc - t) / t) * 100, 1),
+        })
+    return {"period_type": period_type, "series": series}
+
+
 # ------------------------------------------------------ expenses -----------
 @api.get("/expenses")
 async def list_expenses(project_id: Optional[str] = None,
@@ -1228,8 +1430,32 @@ async def dashboard_summary(project_id: Optional[str] = None,
                      "approved_amount": approved_amt},
         "expense_trend": trend,
         "top_vendors": vendors,
+        "period_targets": await _current_period_targets(
+            [p["project_id"] for p in projects]),
         "projects_count": len(projects),
     }
+
+
+async def _current_period_targets(project_ids: list[str]) -> dict:
+    """Build monthly + quarterly current-period target vs received vs accrued."""
+    keys = current_period_keys()
+    out: dict[str, dict] = {}
+    for kind in ("monthly", "quarterly"):
+        k = keys[kind]
+        tgt = (await _sum_targets(project_ids, kind, [k]))[k]
+        act = (await _compute_period_actuals(project_ids, kind, [k]))[k]
+        rec, acc = act["received"], act["accrued"]
+        out[kind] = {
+            "period_key": k,
+            "target": tgt,
+            "received": rec,
+            "accrued": acc,
+            "variance_received": rec - tgt,
+            "variance_accrued": acc - tgt,
+            "variance_received_pct": None if tgt == 0 else round(((rec - tgt) / tgt) * 100, 1),
+            "variance_accrued_pct": None if tgt == 0 else round(((acc - tgt) / tgt) * 100, 1),
+        }
+    return out
 
 
 # ------------------------------------------------------ search ------------

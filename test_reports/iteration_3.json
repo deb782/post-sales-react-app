@@ -1,0 +1,27 @@
+{
+  "summary": "Iteration-3 tested the new Revenue Targets feature end-to-end. Backend: created /app/backend/tests/backend_test_iter3.py with 16 tests covering CRUD/RBAC (admin-only POST+DELETE; accounts, site_manager, management all get 403), UPSERT on same {project,period_type,period_key}, project-not-found 404, list filters, site_manager scope isolation, variance series (6 sorted entries, correct shape, math verified against seeded payments/units, null pct on zero-target, YYYY-Qn quarterly key format), and dashboard summary period_targets (monthly + quarterly present with full variance shape, site_manager scoped). ALL 16/16 passed. Frontend: verified Revenue page renders [data-testid='revenue-targets-section'] with kind selector (monthly↔quarterly), Add Target dialog (project/period/amount fields) admin-only, bar chart w/ Target/Received/Accrued series, and rows w/ delete buttons. Dashboard renders [data-testid='period-targets'] with TWO VarianceTile tiles (Month + Quarter), each with Target amount + Received & Accrued variance chips (rose <0, emerald >=0, stone '—' when null).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/backend_test_iter3.py",
+    "/app/test_reports/pytest/iter3_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "RevenueTargetCreate accepts amount without bounds — negative amounts are allowed and will produce negative variance math. Consider Field(ge=0).",
+    "period_key is a free-form string in the model; a stray value like '2026-2' (unpadded) or '2026-Q5' would insert successfully and never match variance keys. Add regex validation matching '^\\d{4}-(0[1-9]|1[0-2])$' or '^\\d{4}-Q[1-4]$' by period_type.",
+    "_resolve_scope returns [] to mean 'user has no visibility' for out-of-scope project_id; list_targets short-circuits with []; but variance() then passes pids=[] which _sum_targets/_compute_period_actuals treat as 'no project filter' → returns global data. Bug: a site_manager who queries variance with an unauthorised project_id will get all-projects numbers. Fix: if scope is empty list, return zeroed series early (or keep the {$in: []} filter).",
+    "prior_period_keys steps back using (d - timedelta(days=1)).replace(day=1) which is safe; ok.",
+    "Frontend RevenueTargets.jsx suggestPeriods generates keys via new Date(y, m, 1).setMonth(m-1) — DST-safe locally but relies on client tz; if user is in tz where month boundary flips vs UTC this can suggest an off-by-one period_key relative to backend UTC 'current' key. Minor."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test_iter3.py (new)"
+  ],
+  "success_rate": {"backend": "100% (16/16 iter-3 tests passing; iter-1 28 + iter-2 19 preserved)", "frontend": "100% for iter-3 new UI"},
+  "test_credentials": "Iter-3 FE bearer session_token: fetok3_1785224202980 (role=admin, valid 7 days). Iter-3 pytest module seeds its own TEST3_-prefixed users each run.",
+  "seed_data_creation": "iter-3 pytest seeds TEST3_admin, TEST3_acc, TEST3_mgmt, TEST3_sm users + 3 projects (TEST3_Proj, TEST3_ProjOther, TEST3_Var), 3 units on Var project (2 sold with sold_at directly patched to current+prev month), 3 payments across 3 months, and monthly targets for current+last month. Also a stray target on TEST3_ProjOther for scope test.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter-3 tests do NOT wipe DB. If iter-1 backend_test.py fixture is re-run it will drop collections. Use fetok3_1785224202980 for FE probes. Backend URL: https://property-ops-60.preview.emergentagent.com.",
+  "rca of the issue": "No blocking issues found in iter-3 scope. Three latent bugs noted in code review section (unauth scope leak in variance, missing period_key/amount validation)."
+}

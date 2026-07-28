@@ -17,12 +17,13 @@ import { downloadExcel, downloadPdf } from "@/lib/exporters";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import RevenueTargets from "@/components/RevenueTargets";
 
 const fmt = (n = 0) => "₹" + Math.round(n).toLocaleString("en-IN");
 
 export default function Revenue() {
   const { user } = useAuth();
-  const { ProjectFilter, projectId } = useProjectFilter();
+  const { ProjectFilter, projectId, projects: allProjects } = useProjectFilter();
   const [summary, setSummary] = useState({ accrued: 0, received: 0, receivable: 0, by_unit: [] });
   const [payments, setPayments] = useState([]);
   const [open, setOpen] = useState(false);
@@ -113,6 +114,8 @@ export default function Revenue() {
         <Card label="Received" value={fmt(summary.received)} tone="emerald" />
         <Card label="Receivable" value={fmt(summary.receivable)} tone="amber" />
       </div>
+
+      <RevenueTargets projectId={projectId} projects={allProjects} />
 
       <div className="bg-white border border-stone-200 rounded-xl">
         <div className="px-4 py-3 border-b border-stone-200 font-semibold text-sm">Payments Log</div>

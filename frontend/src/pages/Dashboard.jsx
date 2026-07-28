@@ -57,6 +57,13 @@ export default function Dashboard() {
         <Kpi label="Pending Approvals" value={data.expenses.pending + data.expenses.stage1} icon={AlertCircle} accent="amber" />
       </div>
 
+      {data.period_targets && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="period-targets">
+          <VarianceTile title="Month" data={data.period_targets.monthly} />
+          <VarianceTile title="Quarter" data={data.period_targets.quarterly} />
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 bg-white border border-stone-200 rounded-xl p-6 shadow-sm">
           <div className="flex items-center justify-between mb-4">
@@ -151,6 +158,59 @@ export default function Dashboard() {
     </div>
   );
 }
+
+function VarianceChip({ label, pct, positive }) {
+  const tone = pct === null || pct === undefined
+    ? "bg-stone-100 text-stone-600 border-stone-200"
+    : positive
+    ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+    : "bg-rose-100 text-rose-700 border-rose-200";
+  return (
+    <span className={`text-[11px] px-2 py-0.5 rounded-full border ${tone} font-medium`}>
+      {label}: {pct === null || pct === undefined ? "—" : `${pct > 0 ? "+" : ""}${pct}%`}
+    </span>
+  );
+}
+
+function VarianceTile({ title, data }) {
+  const pctRec = data.variance_received_pct;
+  const pctAcc = data.variance_accrued_pct;
+  const posRec = pctRec !== null && pctRec >= 0;
+  const posAcc = pctAcc !== null && pctAcc >= 0;
+  const progress = data.target > 0 ? Math.min(100, (data.received / data.target) * 100) : 0;
+  return (
+    <div className="bg-white border border-stone-200 rounded-xl p-5 shadow-sm">
+      <div className="flex items-baseline justify-between">
+        <div>
+          <div className="text-xs uppercase tracking-widest text-stone-500">{title} · {data.period_key}</div>
+          <div className="mt-1 text-2xl font-bold text-stone-900">{fmt(data.target)}</div>
+          <div className="text-xs text-stone-500">Target</div>
+        </div>
+        <div className="flex flex-col gap-1 items-end">
+          <VarianceChip label="Received" pct={pctRec} positive={posRec} />
+          <VarianceChip label="Accrued" pct={pctAcc} positive={posAcc} />
+        </div>
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
+        <div>
+          <div className="text-[10px] uppercase tracking-widest text-stone-500">Received</div>
+          <div className="text-emerald-800 font-semibold">{fmt(data.received)}</div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-widest text-stone-500">Accrued</div>
+          <div className="text-amber-800 font-semibold">{fmt(data.accrued)}</div>
+        </div>
+      </div>
+      <div className="h-1.5 bg-stone-100 rounded-full mt-4 overflow-hidden">
+        <div className="h-full bg-emerald-800" style={{ width: `${progress}%` }} />
+      </div>
+      {data.target === 0 && (
+        <div className="mt-2 text-[11px] text-stone-400">No target set for this {title.toLowerCase()}.</div>
+      )}
+    </div>
+  );
+}
+
 
 function VendorTile({ v }) {
   const delta = v.delta_pct;
