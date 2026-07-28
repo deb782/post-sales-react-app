@@ -1,0 +1,135 @@
+{
+  "theme": "light",
+  "typography": {
+    "headings": {
+      "font_family": "Cabinet Grotesk",
+      "weights": ["600", "700", "800"],
+      "usage": "Use for all main dashboard headings, section titles, and KPI values. Never use Inter for headings."
+    },
+    "body": {
+      "font_family": "IBM Plex Sans",
+      "weights": ["400", "500"],
+      "usage": "Use for all body text, tables, forms, and secondary text."
+    },
+    "hierarchy_rules": {
+      "h1": "text-4xl sm:text-5xl font-extrabold tracking-tight",
+      "h2": "text-2xl sm:text-3xl font-bold tracking-tight",
+      "h3": "text-xl sm:text-2xl font-bold",
+      "h4": "text-lg sm:text-xl font-semibold",
+      "body": "text-sm md:text-base leading-relaxed",
+      "small": "text-xs uppercase tracking-wider text-stone-500"
+    }
+  },
+  "colors": {
+    "palette_archetype": "ORGANIC & EARTHY / SWISS HYBRID",
+    "backgrounds": {
+      "page": "bg-stone-50",
+      "surface": "bg-white",
+      "sidebar": "bg-stone-900"
+    },
+    "primary": {
+      "DEFAULT": "bg-emerald-900 text-white",
+      "hover": "hover:bg-emerald-800",
+      "border": "border-emerald-900/20",
+      "text": "text-emerald-900",
+      "note": "Deep emerald used in place of teal to maintain professional real-estate aesthetic while adhering to system color restrictions."
+    },
+    "semantic": {
+      "success_sold": "bg-emerald-100 text-emerald-700 border border-emerald-200",
+      "danger_rejected": "bg-rose-100 text-rose-700 border border-rose-200",
+      "warning_pending": "bg-amber-100 text-amber-700 border border-amber-200",
+      "info": "bg-blue-100 text-blue-700 border border-blue-200"
+    },
+    "text": {
+      "primary": "text-stone-900",
+      "secondary": "text-stone-500",
+      "inverse": "text-white"
+    },
+    "borders": "border-stone-200"
+  },
+  "visual_enhancers": {
+    "cards": "bg-white border border-stone-200 rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200",
+    "badges": "rounded-full px-2.5 py-0.5 text-xs font-medium",
+    "glassmorphism": "backdrop-blur-xl bg-white/70 border-b border-stone-200/50",
+    "borders": "Use 1px subtle borders (border-stone-200) to separate grid items and table rows.",
+    "buttons": "Rounded-md (not fully pill, but crisp). Primary buttons use emerald-900. Interaction animations required (scale down slightly on active)."
+  },
+  "component_strategy": {
+    "tables": "Dense, cardless style with subtle borders. Must include inline filters, global search, and export actions at the top.",
+    "charts": "Recharts. Use simple line charts for revenue trends, bar charts for inventory status, and simple donut charts for expenses. Colors should align with the semantic palette.",
+    "modals": "Use Shadcn Dialog. Must have a semi-transparent dark overlay (bg-black/40 backdrop-blur-sm). Used for 'Raise Expense' with file upload zone.",
+    "forms": "Shadcn components. Use Input, Select, Checkbox. Dense spacing (gap-4).",
+    "sidebar": "Dark theme sidebar (bg-stone-900) with white text, emerald-900 highlights for active state. Contains role-aware navigation.",
+    "toasts": "Use Sonner for toast notifications (success/error states for form submissions)."
+  },
+  "grids_and_layouts": {
+    "dashboard_grid": {
+      "base": "grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6",
+      "kpi_cards": "col-span-1",
+      "main_chart": "col-span-1 md:col-span-2 lg:col-span-3 min-h-[300px]",
+      "side_list": "col-span-1 row-span-2"
+    },
+    "page_layout": "Flex container with fixed Sidebar on left (w-64) and main scrollable content area on right.",
+    "spacing": "Generous internal padding for main containers (p-6 or p-8). Tight spacing for data-heavy sections (gap-4)."
+  },
+  "motion": {
+    "hover_states": "All interactive elements must have explicit hover states (e.g., hover:bg-stone-100 hover:text-stone-900).",
+    "page_transitions": "Subtle fade-in for page loads using framer-motion.",
+    "lists": "Staggered entrance animations for table rows and grid cards."
+  },
+  "accessibility": {
+    "contrast": "Ensure all text meets WCAG AA standards. No light gray text on white backgrounds.",
+    "testing": "All interactive elements MUST include a `data-testid` attribute (e.g., `data-testid=\"login-button\"`).",
+    "focus": "Clear focus rings (focus:ring-2 focus:ring-emerald-500 focus:outline-none) on all inputs and buttons."
+  },
+  "media": {
+    "users": [
+      {
+        "description": "Female Admin / Management Avatar",
+        "url": "https://images.unsplash.com/photo-1494790108377-be9c29b29330?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzl8MHwxfHNlYXJjaHwzfHxwcm9mZXNzaW9uYWwlMjBoZWFkc2hvdCUyMHBvcnRyYWl0fGVufDB8fHx8MTc4NTE2MzQwNnww&ixlib=rb-4.1.0&q=85"
+      },
+      {
+        "description": "Male Site Manager Avatar",
+        "url": "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzl8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjBoZWFkc2hvdCUyMHBvcnRyYWl0fGVufDB8fHx8MTc4NTE2MzQwNnww&ixlib=rb-4.1.0&q=85"
+      }
+    ],
+    "projects": [
+      {
+        "description": "Modern architecture project placeholder 1",
+        "url": "https://images.pexels.com/photos/20273065/pexels-photo-20273065.jpeg"
+      },
+      {
+        "description": "Modern architecture project placeholder 2",
+        "url": "https://images.pexels.com/photos/1816030/pexels-photo-1816030.jpeg"
+      }
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Build the layout using a Sidebar on the left and a Header on top of the main content.",
+    "Implement role-based mock routing (Admin, Accounts, Management, Site Manager).",
+    "Use Recharts for the main dashboard analytics (Units Sold/Available, Revenue vs Target).",
+    "Build standard Shadcn Tables for Project Inventory, Expenses, and Stock Book.",
+    "Implement the 2-stage approval workflow UI using distinct status pills (Pending, Stage 1 Approved, Final Approved).",
+    "Do not use `.App { text-align: center; }` or center-align generic text.",
+    "Ensure all interactive elements have `data-testid` attributes."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "You tend to converge toward generic, 'on distribution' outputs. In frontend design, this creates what users call the 'AI slop' aesthetic. Avoid this: make creative, distinctive frontends that surprise and delight.",
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
+    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters (12-24px blur).",
+    "You MUST NOT apply universal transition. Eg: `transition: all`. This results in breaking transforms. Always add transitions for specific interactive elements like button, input excluding transforms.",
+    "You MUST NOT center align the app container, ie do not add `.App { text-align: center; }` in the css file. This disrupts the human natural reading flow of text.",
+    "Always use modern button styles like pill-shaped, or sharp button with interaction animations & color relevant to the app style.",
+    "NEVER: use AI assistant Emoji characters like 🤖🧠💭💡🔮🎯 etc for icons.",
+    "Every interaction needs micro-animations - hover states, transitions, parallax effects, and entrance animations. Static = dead.",
+    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
+    "Subtle grain textures, noise overlays, custom cursors, selection states, and loading animations: separates good from extraordinary.",
+    "Main agent relies on these image URLs. Missing categories (especially sponsor logos) = main agent will use placeholder text which is FORBIDDEN.",
+    "Prioritize using pre-existing components from src/components/ui when applicable.",
+    "Create new components that match the style and conventions of existing components when needed.",
+    "Examine existing components to understand the project's component patterns before creating new ones.",
+    "Use `sonner` for toasts. Sonner component are located in `/app/frontend/src/components/ui/sonner.js`"
+  ]
+}
