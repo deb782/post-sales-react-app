@@ -53,12 +53,24 @@ users, user_sessions, projects, unit_types, units, payments, expenses, stock_ite
 - [x] Vendor spend intelligence strip on Dashboard (top 5, this month vs last, delta %)
 - [x] Session expiry check on file downloads
 
-## Implemented (v3 — 28 Feb 2026)
-- [x] Per-project monthly/quarterly revenue targets (upsert by project+period)
-- [x] Revenue Targets section on Revenue page with bar chart (Target / Received / Accrued × 6 periods)
-- [x] Variance API `GET /api/revenue-targets/variance` — series with received & accrued variance + %
-- [x] Dashboard variance tiles — current month + current quarter with dual chips
-- [x] Role scoping + validation: period_key regex, amount ≥ 0, closed scope-leak
+## Implemented (v4 — 28 Feb 2026)
+- [x] **Password auth** — replaces Emergent Google OAuth. JWT (HS256, 7-day), bcrypt hashing, brute-force lockout (5 attempts / 15 min), forced password reset on first login, admin reset-password endpoint.
+- [x] **Admin seed on startup** — `admin@vistaestates.com / Vista@Admin#2026` (env-configurable, must_reset=true).
+- [x] **Onboarding wizard (3 steps)** — Project → Inventory (manual OR bulk .xlsx/.csv) → Team, with role-gate that blocks dashboard until Accounts + Management + Site Manager all invited.
+- [x] **Project types** — 5 (residential, commercial, plot, villa, mixed), each with its own field set (BHK/floor/carpet for residential, dimensions/facing/corner for plots, use_type/frontage for commercial, plot area / bedrooms for villas).
+- [x] **Project schema** enriched with developer, address, city/state/pincode, RERA number, start_date, expected_completion, total_units_planned.
+- [x] **Bulk unit import per type** — auto-generated .xlsx template with the right columns; .xlsx OR .csv upload; per-row error report; type-aware attribute coercion.
+- [x] **User invites** with auto-generated 12-char secure temp password; best-effort SMTP send (Google Workspace App Password when configured); if SMTP not set, UI reveals the temp password with copy-button for manual sharing.
+- [x] **Project edit + type-aware iconography** on Projects list.
+- [x] **Quick-share** — `<Shareable>` wrapper captures any card/section as PNG (client-side, no backend hit) and offers download + Web Share API on supported browsers.
+- [x] **Dashboard config API** (`/api/me/dashboard-config`) — persistence ready for widget picker + drag-drop UI (deferred to v5).
+- [x] Security fixes from testing agent: ObjectId leak + password_hash leak plugged.
+
+## Deferred / Backlog
+- P1: Dashboard widget picker UI (backend API already in place)
+- P1: Configure Google Workspace SMTP (needs App Password + SMTP_HOST=smtp.gmail.com, SMTP_USER=<workspace email>, SMTP_PASSWORD=<app pw>)
+- P2: Modularise server.py (currently 2200+ lines)
+- P2: TTL index on login_attempts collection
 
 ## Deferred / Backlog
 - P2: Multi-tenant SaaS mode

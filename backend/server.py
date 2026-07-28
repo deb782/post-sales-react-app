@@ -813,6 +813,29 @@ async def create_user(payload: UserCreate,
     }
 
 
+@api.post("/users/{user_id}/reset-password")
+async def admin_reset_password(user_id: str,
+                               actor: User = Depends(require_roles("admin"))):
+    """Admin regenerates a temp password for a locked-out user."""
+    u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not u:
+        raise HTTPException(404, "User not found")
+    temp_pw = gen_temp_password()
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {"password_hash": hash_pw(temp_pw),
+                  "must_reset_password": True}})
+    await db.login_attempts.delete_one({"_id": f"login:{u['email']}"})
+    await audit(actor.user_id, "reset_password", "user", user_id, {})
+    login_url = f"{APP_PUBLIC_URL}/login" if APP_PUBLIC_URL else "/login"
+    email_sent = send_email(
+        u["email"], "Password reset — Vista Estates",
+        invite_email_html(u["name"], u["email"], temp_pw, login_url))
+    return {"temp_password": temp_pw, "login_url": login_url,
+            "email_sent": email_sent}
+
+
+
 @api.patch("/users/{user_id}")
 async def update_user(user_id: str, payload: UserUpdate,
                       user: User = Depends(require_roles("admin"))):
