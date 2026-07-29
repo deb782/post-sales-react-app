@@ -63,6 +63,16 @@ Visit http://localhost:8000 → log in with the seeded admin.
 
 ---
 
+## Deploying
+
+Two supported paths — see [`deploy/`](./deploy/) for the full guides:
+
+- **[Hostinger cPanel](./deploy/HOSTINGER.md)** — cheapest ($3-5/mo), no sysadmin skills.
+- **[Ubuntu VPS](./deploy/VPS.md)** — full control (~$4-6/mo).
+- **[Post-deploy admin seed](./deploy/POST_DEPLOY_SEED.md)** — how to seed / rotate the admin on prod.
+
+---
+
 ## Deploying to Hostinger cPanel (cheapest path)
 
 1. In cPanel → **MySQL Databases** → create db + user, note credentials.
