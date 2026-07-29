@@ -5,10 +5,13 @@ use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\ExpenseController;
+use App\Http\Controllers\ExportController;
 use App\Http\Controllers\NotificationController;
+use App\Http\Controllers\OnboardingController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\RevenueTargetController;
+use App\Http\Controllers\SearchController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\StockController;
 use App\Http\Controllers\UnitController;
@@ -105,5 +108,24 @@ Route::middleware(['auth', 'force.reset', 'onboarded'])->group(function () {
     Route::get('/audit', [AuditLogController::class, 'index'])
         ->middleware('role:admin,accounts,management')->name('audit.index');
 
-    Route::view('/onboarding', 'onboarding')->name('onboarding.index');
+    // Search
+    Route::get('/search', SearchController::class)->name('search');
+
+    // Onboarding
+    Route::get('/onboarding', [OnboardingController::class, 'index'])->name('onboarding.index');
+    Route::post('/onboarding/complete', [OnboardingController::class, 'complete'])->name('onboarding.complete');
+
+    // Exports
+    Route::get('/exports/units.xlsx', [ExportController::class, 'unitsXlsx'])->name('exports.units.xlsx');
+    Route::get('/exports/units.pdf', [ExportController::class, 'unitsPdf'])->name('exports.units.pdf');
+    Route::get('/exports/expenses.xlsx', [ExportController::class, 'expensesXlsx'])->name('exports.expenses.xlsx');
+    Route::get('/exports/expenses.pdf', [ExportController::class, 'expensesPdf'])->name('exports.expenses.pdf');
+    Route::get('/exports/payments.xlsx', [ExportController::class, 'paymentsXlsx'])
+        ->middleware('role:admin,accounts,management')->name('exports.payments.xlsx');
+    Route::get('/exports/stock.xlsx', [ExportController::class, 'stockXlsx'])
+        ->middleware('role:admin,site_manager')->name('exports.stock.xlsx');
+
+    // Imports
+    Route::post('/imports/units', [ExportController::class, 'importUnits'])
+        ->middleware('role:admin')->name('imports.units');
 });

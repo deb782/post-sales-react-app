@@ -15,6 +15,8 @@
         <a href="{{ route('revenue.targets.index', ['project_id' => $projectId]) }}" class="btn-secondary">Targets</a>
         <button x-data @click="$dispatch('open-modal', 'record-payment')" class="btn-primary">Record payment</button>
     @endif
+    <a href="{{ route('exports.payments.xlsx', request()->only('project_id')) }}" class="btn-secondary">Excel</a>
+@endsection
 @endsection
 
 @section('content')

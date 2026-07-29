@@ -48,4 +48,27 @@
             <div class="flex justify-end gap-2 pt-2"><button type="button" @click="open=false" class="btn-secondary">Cancel</button><button class="btn-primary">Confirm sale</button></div>
         </form>
     </div>
+
+{{-- Excel-import modal --}}
+<div x-data="{ open: false }" x-on:open-modal.window="if ($event.detail === 'import-units') open = true"
+     x-show="open" x-cloak class="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+    <div class="card w-full max-w-md p-6" @click.outside="open = false">
+        <div class="flex justify-between items-center mb-4"><h2 class="text-lg font-semibold">Import units from Excel</h2><button @click="open=false" class="text-slate-400">✕</button></div>
+        <form method="POST" action="{{ route('imports.units') }}" enctype="multipart/form-data" class="space-y-3">
+            @csrf
+            <input type="hidden" name="project_id" value="{{ $projectId }}">
+            <div>
+                <label class="block text-xs mb-1">File (.xlsx / .csv)</label>
+                <input type="file" name="file" accept=".xlsx,.csv,.xls" class="text-sm" required>
+            </div>
+            <div class="text-xs text-slate-500 bg-slate-50 rounded p-3">
+                <p class="font-medium mb-1">Required columns (header row):</p>
+                <code>unit_number, price, status, bhk, floor, carpet, facing, dimensions</code>
+                <p class="mt-2">Only <b>unit_number</b> is required. Extra columns are ignored.</p>
+            </div>
+            <div class="flex justify-end gap-2 pt-2"><button type="button" @click="open=false" class="btn-secondary">Cancel</button><button class="btn-primary">Import</button></div>
+        </form>
+    </div>
+</div>
+
 </div>

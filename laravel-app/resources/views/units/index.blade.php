@@ -19,9 +19,12 @@
     @if(auth()->user()->hasRole('admin', 'accounts'))
         <button x-data @click="$dispatch('open-modal', 'add-unit')" class="btn-secondary">Add unit</button>
         @if(auth()->user()->isAdmin())
-            <button x-data @click="$dispatch('open-modal', 'bulk-units')" class="btn-primary">Bulk create</button>
+            <button x-data @click="$dispatch('open-modal', 'bulk-units')" class="btn-secondary">Bulk create</button>
+            <button x-data @click="$dispatch('open-modal', 'import-units')" class="btn-secondary">Import Excel</button>
         @endif
     @endif
+    <a href="{{ route('exports.units.xlsx', request()->only('project_id', 'status')) }}" class="btn-secondary">Excel</a>
+    <a href="{{ route('exports.units.pdf', request()->only('project_id', 'status')) }}" class="btn-primary">PDF</a>
 @endsection
 
 @section('content')

@@ -12,6 +12,8 @@
         </select>
     </form>
     <button x-data @click="$dispatch('open-modal', 'raise-expense')" class="btn-primary">Raise expense</button>
+    <a href="{{ route('exports.expenses.xlsx') }}" class="btn-secondary">Excel</a>
+    <a href="{{ route('exports.expenses.pdf') }}" class="btn-secondary">PDF</a>
 @endsection
 
 @section('content')

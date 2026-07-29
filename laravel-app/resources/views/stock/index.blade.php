@@ -11,6 +11,7 @@
     </form>
     <button x-data @click="$dispatch('open-modal', 'add-item')" class="btn-secondary">Add item</button>
     <button x-data @click="$dispatch('open-modal', 'add-movement')" class="btn-primary">Record movement</button>
+    <a href="{{ route('exports.stock.xlsx', ['project_id' => $projectId]) }}" class="btn-secondary">Excel</a>
 @endsection
 
 @section('content')
