@@ -1,0 +1,82 @@
+╔════════════════════════════════════════════════════════════════╗
+║   REAL ESTATE DASHBOARD — Laravel 11 + MySQL                   ║
+║   READ THIS FIRST                                              ║
+╚════════════════════════════════════════════════════════════════╝
+
+WHAT'S IN THIS ZIP
+------------------
+- Full Laravel 11 source code
+- ✅ Pre-built CSS + JS assets (public/build/*)     ← so UI works
+- Migrations, seeders, controllers, views, routes
+- setup.ps1 (Windows) and setup.sh (macOS/Linux) — one-command setup
+- deploy/ — Hostinger cPanel and VPS deployment guides
+
+WHAT'S NOT IN THIS ZIP (intentionally)
+--------------------------------------
+- vendor/         → run: composer install
+- node_modules/   → not needed since assets are pre-built
+- .env            → template is at .env.example (copy it)
+
+PREREQUISITES ON YOUR MACHINE
+-----------------------------
+1. PHP 8.3+                  https://windows.php.net/download   or   Laravel Herd (easiest for Windows/Mac)
+2. Composer 2                https://getcomposer.org/download
+3. MySQL 8 or MariaDB 10.6+  or XAMPP/Laragon (bundles everything)
+
+⭐ EASIEST OPTION FOR WINDOWS: install Laravel Herd
+   https://herd.laravel.com/  — it bundles PHP 8.3, MySQL, Composer.
+
+5-STEP SETUP
+------------
+1. Extract this zip somewhere convenient
+2. Open PowerShell (Win) or Terminal (Mac/Linux) in the laravel-app folder
+3. Create the database:
+       In MySQL:
+       CREATE DATABASE realestate_dashboard
+           CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+4. Run the setup script:
+       Windows :   .\setup.ps1
+       Mac/Linux:  bash setup.sh
+   It will:
+       - run composer install
+       - copy .env.example → .env  (stop and edit DB_PASSWORD, MAIL_PASSWORD, APP_URL)
+       - generate app key
+       - run migrations + seed the admin user
+5. Start the server:
+       php artisan serve --host=0.0.0.0 --port=8000
+   The seeder prints your admin email + temp password — copy them.
+
+Open http://<your-machine-ip>:8000/login  and log in.
+On first login you'll be forced to set a new password.
+
+TROUBLESHOOTING
+---------------
+UI looks unstyled after login
+    → Your APP_URL in .env doesn't match the URL in your browser.
+      If browsing to 192.168.x.x:8000, .env must say APP_URL=http://192.168.x.x:8000
+      Then run: php artisan config:clear
+
+Sidebar / dropdowns / modals not working
+    → Same fix as above (Alpine.js is loading from the wrong URL)
+    → Also check browser dev tools → Console → any 404s on /build/assets/*
+
+"Access denied for user"
+    → Wrong DB credentials in .env. Recheck DB_USERNAME + DB_PASSWORD.
+
+"SQLSTATE[HY000] [1049] Unknown database"
+    → You forgot step 3 — create the database in MySQL first.
+
+Emails not sending
+    → Google Workspace requires an APP PASSWORD (not your regular password).
+      Get one at https://myaccount.google.com/apppasswords (2FA must be on).
+      Put it in MAIL_PASSWORD in .env.
+
+FOR PRODUCTION DEPLOYMENT
+-------------------------
+See deploy/HOSTINGER.md  (cheapest, cPanel)
+See deploy/VPS.md         (Contabo / Hetzner / DigitalOcean)
+
+FULL DOCS
+---------
+Root of the zip → README.md      (developer docs)
+Root of the zip → deploy/README.md (which host to pick)
