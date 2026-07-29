@@ -1,0 +1,2 @@
+<?php
+// Deny access. Only /public should be exposed by the web server.

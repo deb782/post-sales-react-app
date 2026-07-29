@@ -10,6 +10,7 @@ Built for internal use by admins, accountants, management, and site managers.
 
 ## Quick Links
 
+- **[Laravel/MySQL port](./laravel-app/README.md)** — 🆕 PHP version (Phase 1 complete: auth + schema + dashboard scaffold).
 - **[User Guide](./docs/USER_GUIDE.md)** — how to use the app (for admins,
   accountants, management, site managers).
 - **[Tech Spec](./docs/TECH_SPEC.md)** — architecture, data models, API
