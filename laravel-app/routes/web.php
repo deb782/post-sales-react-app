@@ -2,9 +2,15 @@
 
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\PasswordResetController;
+use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\ExpenseController;
+use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\ProjectController;
+use App\Http\Controllers\RevenueTargetController;
+use App\Http\Controllers\SettingsController;
+use App\Http\Controllers\StockController;
 use App\Http\Controllers\UnitController;
 use App\Http\Controllers\UserController;
 use Illuminate\Support\Facades\Route;
@@ -29,6 +35,11 @@ Route::middleware(['auth', 'force.reset', 'onboarded'])->group(function () {
     Route::redirect('/', '/dashboard');
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
+    // Notifications
+    Route::get('/notifications/poll', [NotificationController::class, 'poll'])->name('notifications.poll');
+    Route::post('/notifications/read-all', [NotificationController::class, 'markAllRead'])->name('notifications.readAll');
+    Route::post('/notifications/{notification}/read', [NotificationController::class, 'markRead'])->name('notifications.read');
+
     // Projects
     Route::get('/projects', [ProjectController::class, 'index'])->name('projects.index');
     Route::middleware('role:admin')->group(function () {
@@ -50,12 +61,32 @@ Route::middleware(['auth', 'force.reset', 'onboarded'])->group(function () {
     Route::post('/units/{unit}/cancel', [UnitController::class, 'cancel'])
         ->middleware('role:admin')->name('units.cancel');
 
-    // Revenue / Payments
+    // Revenue / Payments / Targets
     Route::middleware('role:admin,accounts,management')->group(function () {
         Route::get('/revenue', [PaymentController::class, 'index'])->name('revenue.index');
+        Route::get('/revenue/targets', [RevenueTargetController::class, 'index'])->name('revenue.targets.index');
     });
-    Route::post('/payments', [PaymentController::class, 'store'])
-        ->middleware('role:admin,accounts')->name('payments.store');
+    Route::middleware('role:admin,accounts')->group(function () {
+        Route::post('/payments', [PaymentController::class, 'store'])->name('payments.store');
+        Route::post('/revenue/targets', [RevenueTargetController::class, 'store'])->name('revenue.targets.store');
+    });
+    Route::delete('/revenue/targets/{target}', [RevenueTargetController::class, 'destroy'])
+        ->middleware('role:admin')->name('revenue.targets.destroy');
+
+    // Expenses (any role can raise)
+    Route::get('/expenses', [ExpenseController::class, 'index'])->name('expenses.index');
+    Route::post('/expenses', [ExpenseController::class, 'store'])->name('expenses.store');
+    Route::post('/expenses/{expense}/stage1', [ExpenseController::class, 'stage1'])
+        ->middleware('role:accounts,admin')->name('expenses.stage1');
+    Route::post('/expenses/{expense}/final', [ExpenseController::class, 'final'])
+        ->middleware('role:management,admin')->name('expenses.final');
+
+    // Stock
+    Route::middleware('role:admin,site_manager')->group(function () {
+        Route::get('/stock', [StockController::class, 'index'])->name('stock.index');
+        Route::post('/stock/items', [StockController::class, 'storeItem'])->name('stock.items.store');
+        Route::post('/stock/movements', [StockController::class, 'storeMovement'])->name('stock.movements.store');
+    });
 
     // Users (admin only)
     Route::middleware('role:admin')->group(function () {
@@ -66,10 +97,13 @@ Route::middleware(['auth', 'force.reset', 'onboarded'])->group(function () {
         Route::delete('/users/{user}', [UserController::class, 'destroy'])->name('users.destroy');
     });
 
-    // Placeholders — Phase 3+
-    Route::view('/expenses', 'expenses.index')->name('expenses.index');
-    Route::view('/stock', 'stock.index')->name('stock.index')->middleware('role:admin,site_manager');
-    Route::view('/audit', 'audit.index')->name('audit.index')->middleware('role:admin,accounts,management');
-    Route::view('/settings', 'settings.index')->name('settings.index')->middleware('role:admin');
+    // Settings + audit
+    Route::middleware('role:admin')->group(function () {
+        Route::get('/settings', [SettingsController::class, 'edit'])->name('settings.index');
+        Route::put('/settings', [SettingsController::class, 'update'])->name('settings.update');
+    });
+    Route::get('/audit', [AuditLogController::class, 'index'])
+        ->middleware('role:admin,accounts,management')->name('audit.index');
+
     Route::view('/onboarding', 'onboarding')->name('onboarding.index');
 });

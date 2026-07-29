@@ -12,6 +12,7 @@
         </select>
     </form>
     @if(auth()->user()->hasRole('admin', 'accounts'))
+        <a href="{{ route('revenue.targets.index', ['project_id' => $projectId]) }}" class="btn-secondary">Targets</a>
         <button x-data @click="$dispatch('open-modal', 'record-payment')" class="btn-primary">Record payment</button>
     @endif
 @endsection

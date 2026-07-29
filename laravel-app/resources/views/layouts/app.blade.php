@@ -53,6 +53,7 @@
             <header class="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between">
                 <h1 class="text-xl font-semibold">@yield('heading', 'Dashboard')</h1>
                 <div class="flex items-center gap-3">
+                    @include('partials.notifications-bell')
                     @yield('header-actions')
                 </div>
             </header>
