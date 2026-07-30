@@ -37,6 +37,11 @@ $cfg = $GLOBALS['__config'];
 </head>
 <body>
 <div class="login-page">
+    <div class="login-visual">
+        <div class="vbrand"><?= e($cfg['company_name']) ?><small>Estate Dashboard</small></div>
+        <div class="vquote">"A strong first login. A stronger dashboard ahead."<small>Estate Dashboard</small></div>
+    </div>
+    <div class="login-form-side">
     <div class="login-card">
         <div class="login-eyebrow">First Login</div>
         <h1 class="login-heading">Set a new password</h1>
@@ -51,6 +56,7 @@ $cfg = $GLOBALS['__config'];
             <div class="form-row"><label>Confirm new password</label><input type="password" name="password_confirmation" required></div>
             <button type="submit" class="login-btn">Update password</button>
         </form>
+    </div>
     </div>
 </div>
 </body>

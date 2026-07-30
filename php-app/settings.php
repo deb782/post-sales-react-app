@@ -14,22 +14,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
           [$_POST['company_name'], $_POST['currency'], (float)$_POST['threshold_amount']]);
     }
     flash_set('ok', 'Settings saved.');
-    redirect('/settings.php');
+    redirect('settings.php');
 }
 
 $s = fetch_one('SELECT * FROM settings WHERE id=1');
-
 $page_title = 'Settings';
+$page_eyebrow = 'Administration';
 $page_heading = 'Settings';
 require_once __DIR__ . '/includes/header.php';
 ?>
 
-<div class="card" style="max-width:640px">
+<div class="card" style="max-width:720px">
     <form method="post" enctype="multipart/form-data">
         <?= csrf_field() ?>
-        <div class="form-row"><label>Company name</label><input name="company_name" value="<?= e($s['company_name']) ?>" required></div>
+        <div class="form-row">
+            <label>Company name</label>
+            <input name="company_name" value="<?= e($s['company_name']) ?>" required>
+        </div>
         <div class="form-grid">
-            <div class="form-row"><label>Currency</label><input name="currency" value="<?= e($s['currency']) ?>" required></div>
+            <div class="form-row">
+                <label>Currency</label>
+                <input name="currency" value="<?= e($s['currency']) ?>" required>
+            </div>
             <div class="form-row">
                 <label>Expense threshold (₹)</label>
                 <input type="number" step="0.01" name="threshold_amount" value="<?= (float)$s['threshold_amount'] ?>" required>
@@ -38,10 +44,10 @@ require_once __DIR__ . '/includes/header.php';
         </div>
         <div class="form-row">
             <label>Company logo</label>
-            <?php if ($s['logo_path']): ?><img src="<?= url($s['logo_path']) ?>" style="height:48px; margin-bottom:8px"><br><?php endif; ?>
+            <?php if ($s['logo_path']): ?><img src="<?= url($s['logo_path']) ?>" style="height:48px; margin-bottom:8px; display:block"><?php endif; ?>
             <input type="file" name="logo" accept="image/*">
         </div>
-        <div class="right"><button class="btn primary">Save settings</button></div>
+        <div class="right mt-4"><button class="btn primary">Save settings</button></div>
     </form>
 </div>
 

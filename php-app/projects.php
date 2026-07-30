@@ -82,7 +82,7 @@ require_once __DIR__ . '/includes/header.php';
 
 <?php if (has_role('admin')): ?>
 <div id="m-new" class="modal-backdrop">
-    <div class="modal">
+    <div class="modal" style="max-width:640px">
         <button class="modal-close" onclick="closeModal('m-new')">✕</button>
         <h2>New project</h2>
         <form method="post" enctype="multipart/form-data">
@@ -114,7 +114,7 @@ require_once __DIR__ . '/includes/header.php';
             <div class="form-row"><label>Cover image</label><input type="file" name="image" accept="image/*"></div>
             <div class="form-actions">
                 <button type="button" class="btn secondary" onclick="closeModal('m-new')">Cancel</button>
-                <button class="btn primary">Create</button>
+                <button class="btn primary">Create project</button>
             </div>
         </form>
     </div>

@@ -19,14 +19,16 @@ $page_heading = 'Audit Log';
 require_once __DIR__ . '/includes/header.php';
 ?>
 
-<form method="get" class="flex mb-4" style="gap:8px">
-    <input name="action" value="<?= e($actionFilter) ?>" placeholder="Action starts with…">
-    <select name="entity_type">
-        <option value="">All entities</option>
-        <?php foreach (['user','project','unit','expense','payment'] as $t): ?>
-            <option value="<?= $t ?>" <?= $entityFilter===$t?'selected':'' ?>><?= ucfirst($t) ?></option>
-        <?php endforeach; ?>
-    </select>
+<form method="get" class="flex mb-4" style="gap:10px; align-items:flex-end; flex-wrap:wrap">
+    <div style="flex:1; min-width:220px"><label>Action starts with</label><input name="action" value="<?= e($actionFilter) ?>" placeholder="e.g. expense.stage1"></div>
+    <div style="min-width:180px"><label>Entity</label>
+        <select name="entity_type">
+            <option value="">All entities</option>
+            <?php foreach (['user','project','unit','expense','payment'] as $t): ?>
+                <option value="<?= $t ?>" <?= $entityFilter===$t?'selected':'' ?>><?= ucfirst($t) ?></option>
+            <?php endforeach; ?>
+        </select>
+    </div>
     <button class="btn secondary">Filter</button>
 </form>
 

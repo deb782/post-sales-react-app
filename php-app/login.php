@@ -30,6 +30,14 @@ $adminEmail = $cfg['smtp_from'] ?? 'admin@yourcompany.com';
 </head>
 <body>
 <div class="login-page">
+    <div class="login-visual">
+        <div class="vbrand"><?= e($cfg['company_name']) ?><small>Estate Dashboard</small></div>
+        <div class="vquote">
+            "Every square foot has a story. Track them all — from launch to handover."
+            <small>Internal Dashboard · <?= date('Y') ?></small>
+        </div>
+    </div>
+    <div class="login-form-side">
     <div class="login-card">
         <div class="login-eyebrow">Sign In</div>
         <h1 class="login-heading">Welcome back</h1>
@@ -60,6 +68,7 @@ $adminEmail = $cfg['smtp_from'] ?? 'admin@yourcompany.com';
             <strong>First-time admins</strong>
             <p>System-seeded admin: <code><?= e($adminEmail) ?></code> — you'll be prompted to change the password immediately.</p>
         </div>
+    </div>
     </div>
 </div>
 </body>
