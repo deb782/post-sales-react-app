@@ -1,0 +1,11 @@
+Options -Indexes
+
+# Deny direct access to include files and config
+<FilesMatch "^(config\.php|.*\.md|composer\..*|package\..*|\.env.*)$">
+    Require all denied
+</FilesMatch>
+
+# Protect the includes folder
+<DirectoryMatch "^.*/(includes)/">
+    Require all denied
+</DirectoryMatch>
