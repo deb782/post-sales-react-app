@@ -19,9 +19,9 @@ $page_heading = 'Audit Log';
 require_once __DIR__ . '/includes/header.php';
 ?>
 
-<form method="get" class="flex mb-4" style="gap:10px; align-items:flex-end; flex-wrap:wrap">
-    <div style="flex:1; min-width:220px"><label>Action starts with</label><input name="action" value="<?= e($actionFilter) ?>" placeholder="e.g. expense.stage1"></div>
-    <div style="min-width:180px"><label>Entity</label>
+<form method="get" class="mb-4" style="display:grid; grid-template-columns: 1fr 1fr auto; gap:14px; align-items:flex-end; max-width:720px">
+    <div><label>Action starts with</label><input name="action" value="<?= e($actionFilter) ?>" placeholder="e.g. expense.stage1"></div>
+    <div><label>Entity</label>
         <select name="entity_type">
             <option value="">All entities</option>
             <?php foreach (['user','project','unit','expense','payment'] as $t): ?>
@@ -29,7 +29,7 @@ require_once __DIR__ . '/includes/header.php';
             <?php endforeach; ?>
         </select>
     </div>
-    <button class="btn secondary">Filter</button>
+    <button class="btn secondary" style="height:39px">Filter</button>
 </form>
 
 <div class="card table-wrap" style="padding:0">

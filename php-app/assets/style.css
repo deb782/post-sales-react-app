@@ -107,10 +107,11 @@ label {
 }
 .login-form { display: flex; flex-direction: column; gap: 24px; }
 .login-form .form-row { margin: 0; }
-.login-form input {
+.login-form input, .login-form select {
     width: 100%; padding: 13px 16px; border: 1px solid var(--border);
     border-radius: 10px; font-size: 14px; font-family: inherit;
     background: #fff; color: var(--text); transition: all 0.15s;
+    display: block;
 }
 .login-form input:focus {
     outline: none; border-color: var(--green);
@@ -256,11 +257,15 @@ label {
 .kpi-sub { font-size: 12px; color: var(--muted); margin-top: 6px; }
 
 /* ============ FORMS ============ */
-input[type=text], input[type=email], input[type=password], input[type=number],
-input[type=date], input[type=file], select, textarea {
+input, select, textarea {
     width: 100%; padding: 10px 14px; border: 1px solid var(--border);
     border-radius: 8px; font-size: 13px; font-family: inherit;
     background: #fff; color: var(--text); transition: all 0.15s;
+    display: block;
+}
+input[type=checkbox], input[type=radio],
+input[type=submit], input[type=button], input[type=reset] {
+    width: auto; display: inline-block;
 }
 input:focus, select:focus, textarea:focus {
     outline: none; border-color: var(--green);
