@@ -371,7 +371,7 @@ class Settings(BaseModel):
     model_config = ConfigDict(extra="ignore")
     approval_threshold: float = 50000
     currency: str = "INR"
-    company_name: str = "Estate OS"
+    company_name: str = "Agrocorp Admin"
     logo_file_id: Optional[str] = None
     updated_at: str = Field(default_factory=now)
 

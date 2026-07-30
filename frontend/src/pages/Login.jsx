@@ -91,7 +91,7 @@ export default function Login() {
           </div>
           <div className="mt-6 rounded-lg border border-stone-200 bg-white p-4 text-xs text-stone-600">
             <div className="font-semibold text-stone-900 mb-1">First-time admins</div>
-            System-seeded admin: <span className="font-mono">admin@vistaestates.com</span> — you&apos;ll be prompted to change the password immediately.
+            System-seeded admin: <span className="font-mono">sales@agrocorp.co.in</span> — you&apos;ll be prompted to change the password immediately.
           </div>
         </form>
       </div>
