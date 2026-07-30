@@ -1,44 +1,38 @@
 #!/usr/bin/env bash
 # ==============================================================
-#  Local setup for the Real Estate Dashboard (Laravel + MySQL)
-#  Run: bash setup.sh   (macOS / Linux)
-#  Prerequisites: PHP 8.3, Composer 2, MySQL 8 (or MariaDB 10.6+)
+#  Real Estate Dashboard — Local setup (PHP + MySQL, NO Node)
+#  All frontend assets load from CDN — no npm, no build step.
 # ==============================================================
 
 set -e
 
-echo -e "\n== Step 1/5 : PHP dependencies (composer) =="
+echo -e "\n== Step 1/5 : Storage directories =="
+mkdir -p storage/framework/{cache/data,sessions,views,testing} storage/logs storage/app/public bootstrap/cache
+
+echo -e "\n== Step 2/5 : composer install =="
 composer install
 
-echo -e "\n== Step 2/5 : .env file =="
+echo -e "\n== Step 3/5 : .env =="
 if [ ! -f .env ]; then
     cp .env.example .env
-    echo ".env created — edit it now to set DB_PASSWORD, MAIL_PASSWORD, and APP_URL."
-    read -p "Press Enter after you have edited .env"
-else
-    echo ".env already exists — leaving it as-is."
+    echo ".env created. Edit it now to set DB_PASSWORD and MAIL_PASSWORD."
+    read -p "Press Enter after saving .env"
 fi
-
-echo -e "\n== Step 3/5 : app key + storage link =="
 php artisan key:generate --force
 php artisan storage:link
 
-echo -e "\n== Step 4/5 : DB migrations + admin seed =="
-echo "Make sure MySQL is running and the database exists:"
-echo "  CREATE DATABASE realestate_dashboard CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+echo -e "\n== Step 4/5 : Migrations + admin seed =="
+echo "Create database 'realestate_dashboard' first."
 read -p "Press Enter to run migrations"
 php artisan migrate --seed --force
 
-echo -e "\n== Step 5/5 : clear caches =="
-php artisan config:clear
-php artisan view:clear
-php artisan cache:clear
+echo -e "\n== Step 5/5 : Clear caches =="
+php artisan config:clear && php artisan view:clear && php artisan cache:clear && php artisan route:clear
 
-echo -e "\n================================================="
+echo -e "\n==================================================="
 echo " Setup complete. Start the server with:"
 echo ""
-echo "   php artisan serve --host=0.0.0.0 --port=8000"
+echo "   php artisan serve"
 echo ""
-echo " Then open http://<your-lan-ip>:8000/login in a browser."
-echo " The admin email + temp password were printed above by the seeder."
-echo "================================================="
+echo " Open http://localhost:8000/login"
+echo "==================================================="
