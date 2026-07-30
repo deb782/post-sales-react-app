@@ -15,7 +15,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $err = $r['msg'];
 }
 $cfg = $GLOBALS['__config'];
-$initials = strtoupper(substr($cfg['company_name'], 0, 2));
+$adminEmail = $cfg['smtp_from'] ?? 'admin@yourcompany.com';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -23,35 +23,44 @@ $initials = strtoupper(substr($cfg['company_name'], 0, 2));
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Sign in — <?= e($cfg['app_name']) ?></title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="<?= url('assets/style.css') ?>">
 </head>
 <body>
 <div class="login-page">
     <div class="login-card">
-        <div class="login-logo"><?= e($initials) ?></div>
-        <div class="login-title">
-            <h1><?= e($cfg['company_name']) ?></h1>
-            <p>Sign in to your estate dashboard</p>
-        </div>
+        <div class="login-eyebrow">Sign In</div>
+        <h1 class="login-heading">Welcome back</h1>
+        <p class="login-lead">
+            Use the email and temporary password shared by your administrator.
+            You'll be asked to set a new password on first login.
+        </p>
 
         <?php if ($err): ?><div class="login-error"><?= e($err) ?></div><?php endif; ?>
 
-        <form method="post">
+        <form method="post" class="login-form">
             <?= csrf_field() ?>
             <div class="form-row">
-                <label>Email address</label>
-                <input type="email" name="email" value="<?= old('email') ?>" required autofocus placeholder="you@company.com">
+                <label>Email</label>
+                <input type="email" name="email" value="<?= old('email') ?>" required autofocus>
             </div>
             <div class="form-row">
                 <label>Password</label>
-                <input type="password" name="password" required placeholder="Your password">
+                <div class="password-wrap">
+                    <input type="password" id="pw" name="password" required>
+                    <button type="button" class="toggle-eye" onclick="var i=document.getElementById('pw');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'👁':'🙈'">👁</button>
+                </div>
             </div>
-            <button type="submit" class="login-btn">Sign in →</button>
+            <button type="submit" class="login-btn">Sign in</button>
         </form>
+
+        <div class="login-info">
+            <strong>First-time admins</strong>
+            <p>System-seeded admin: <code><?= e($adminEmail) ?></code> — you'll be prompted to change the password immediately.</p>
+        </div>
     </div>
-    <p class="login-hint" style="position:absolute; bottom: 20px; left: 0; right: 0;">
-        Trouble signing in? Ask your admin to reset your password.
-    </p>
 </div>
 </body>
 </html>

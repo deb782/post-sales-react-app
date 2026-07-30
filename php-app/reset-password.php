@@ -10,7 +10,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $current = $_POST['current_password'] ?? '';
     $new = $_POST['password'] ?? '';
     $confirm = $_POST['password_confirmation'] ?? '';
-
     if (! password_verify($current, $u['password_hash'])) $err = 'Current password is incorrect.';
     elseif (strlen($new) < 8) $err = 'Password must be at least 8 characters.';
     elseif (! preg_match('/[A-Za-z]/', $new) || ! preg_match('/[0-9]/', $new)) $err = 'Password must include letters and numbers.';
@@ -31,20 +30,21 @@ $cfg = $GLOBALS['__config'];
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Set new password — <?= e($cfg['app_name']) ?></title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="<?= url('assets/style.css') ?>">
 </head>
 <body>
 <div class="login-page">
     <div class="login-card">
-        <div class="login-logo">🔒</div>
-        <div class="login-title">
-            <h1>Set a new password</h1>
-            <p>Required before you can use the dashboard.</p>
-        </div>
+        <div class="login-eyebrow">First Login</div>
+        <h1 class="login-heading">Set a new password</h1>
+        <p class="login-lead">Required before you can access the dashboard. Choose something at least 8 characters, mixing letters and numbers.</p>
 
         <?php if ($err): ?><div class="login-error"><?= e($err) ?></div><?php endif; ?>
 
-        <form method="post">
+        <form method="post" class="login-form">
             <?= csrf_field() ?>
             <div class="form-row"><label>Current (temp) password</label><input type="password" name="current_password" required autofocus></div>
             <div class="form-row"><label>New password</label><input type="password" name="password" required></div>

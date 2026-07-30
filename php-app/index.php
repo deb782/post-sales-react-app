@@ -1,6 +1,7 @@
 <?php
 $page_title = 'Dashboard';
-$page_heading = '📊 Dashboard';
+$page_eyebrow = 'Overview';
+$page_heading = 'Welcome back';
 require_once __DIR__ . '/includes/header.php';
 
 $u = current_user();
@@ -36,40 +37,40 @@ $totalProjects = (int) fetch_one("SELECT COUNT(*) n FROM projects")['n'];
 ?>
 
 <div class="grid grid-4">
-    <div class="kpi blue">
-        <div class="kpi-label">Total Projects</div>
+    <div class="kpi">
+        <div class="kpi-label">Projects</div>
         <div class="kpi-value"><?= $totalProjects ?></div>
         <div class="kpi-sub">Across all types</div>
     </div>
-    <div class="kpi purple">
+    <div class="kpi">
         <div class="kpi-label">Total Units</div>
         <div class="kpi-value"><?= $totalUnits ?></div>
         <div class="kpi-sub"><?= $availUnits ?> available · <?= $reservedUnits ?> reserved</div>
     </div>
-    <div class="kpi green">
+    <div class="kpi">
         <div class="kpi-label">Units Sold</div>
         <div class="kpi-value ok"><?= $soldUnits ?></div>
         <div class="kpi-sub"><?= $totalUnits ? round(($soldUnits/$totalUnits)*100, 1) : 0 ?>% of inventory</div>
     </div>
-    <div class="kpi red">
+    <div class="kpi">
         <div class="kpi-label">Pending Approvals</div>
-        <div class="kpi-value bad"><?= $pending ?></div>
-        <div class="kpi-sub">Expenses awaiting you</div>
+        <div class="kpi-value <?= $pending>0?'bad':'' ?>"><?= $pending ?></div>
+        <div class="kpi-sub">Awaiting your action</div>
     </div>
 </div>
 
 <div class="grid grid-3 mt-6">
-    <div class="kpi blue">
+    <div class="kpi">
         <div class="kpi-label">Accrued Revenue</div>
         <div class="kpi-value"><?= inr($accrued) ?></div>
         <div class="kpi-sub">Sum of sold-unit prices</div>
     </div>
-    <div class="kpi green">
+    <div class="kpi">
         <div class="kpi-label">Received</div>
         <div class="kpi-value ok"><?= inr($received) ?></div>
         <div class="kpi-sub">Payments recorded</div>
     </div>
-    <div class="kpi amber">
+    <div class="kpi">
         <div class="kpi-label">Receivable</div>
         <div class="kpi-value amber"><?= inr($receivable) ?></div>
         <div class="kpi-sub">Accrued − Received</div>
@@ -78,8 +79,11 @@ $totalProjects = (int) fetch_one("SELECT COUNT(*) n FROM projects")['n'];
 
 <div class="card mt-6">
     <div class="flex between mb-4">
-        <h2>💰 Revenue — last 12 months</h2>
-        <a href="<?= url('payments.php') ?>" class="btn sm secondary">View all payments →</a>
+        <div>
+            <div class="eyebrow" style="margin-bottom:4px">Revenue</div>
+            <h2>Last 12 months</h2>
+        </div>
+        <a href="<?= url('payments.php') ?>" class="btn sm secondary">View payments →</a>
     </div>
     <?php if ($monthly): ?>
         <?php $max = max(array_column($monthly, 't')) ?: 1; ?>
@@ -88,7 +92,7 @@ $totalProjects = (int) fetch_one("SELECT COUNT(*) n FROM projects")['n'];
                 <div class="revenue-bar">
                     <div class="amount"><?= inr((float)$m['t']) ?></div>
                     <div class="bar" style="height:<?= (int)$h ?>px"></div>
-                    <div class="month"><?= e(substr($m['m'], 5)) ?>/<?= e(substr($m['m'], 2, 2)) ?></div>
+                    <div class="month"><?= e($m['m']) ?></div>
                 </div>
             <?php endforeach; ?>
         </div>
@@ -98,11 +102,17 @@ $totalProjects = (int) fetch_one("SELECT COUNT(*) n FROM projects")['n'];
 </div>
 
 <div class="card mt-6">
-    <h2 class="mb-4">🏘️ Inventory status</h2>
+    <div class="eyebrow" style="margin-bottom:4px">Inventory</div>
+    <h2 class="mb-4">Status breakdown</h2>
     <div class="grid grid-4">
-        <?php $stats = [['available','green','Available',$availUnits],['reserved','amber','Reserved',$reservedUnits],['sold','blue','Sold',$soldUnits],['cancelled','red','Cancelled',$totalUnits-$soldUnits-$availUnits-$reservedUnits]]; ?>
+        <?php $stats = [
+            ['available','green','Available',$availUnits],
+            ['reserved','amber','Reserved',$reservedUnits],
+            ['sold','blue','Sold',$soldUnits],
+            ['cancelled','red','Cancelled',$totalUnits-$soldUnits-$availUnits-$reservedUnits],
+        ]; ?>
         <?php foreach ($stats as [$s, $tone, $label, $n]): ?>
-            <div class="kpi <?= $tone ?>">
+            <div class="kpi">
                 <div class="kpi-label"><span class="badge <?= $tone ?>"><?= $label ?></span></div>
                 <div class="kpi-value"><?= max(0, $n) ?></div>
             </div>
