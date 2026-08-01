@@ -1,0 +1,25 @@
+{
+  "summary": "Iter12 backend regression PASSED (11/11). Verified: (1) server.py env-driven defaults now match user admin (deb@agrocorp.co.in / Admin@Agro@2026# / Agrocorp Admin) with no lingering Vista defaults; (2) startup self-heal reactivates a deactivated admin AND clears stale login_attempts entry on next boot; (3) seed idempotency — a user-changed password survives restart (not overwritten by ADMIN_TEMP_PASSWORD); (4) startup safe when login_attempts doc missing (delete_one is a no-op); (5) e2e login returns access_token + must_reset_password=True. Iter11 lockout regression (6 tests) still fully passing.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/backend_test_iter12_seed_selfheal.py",
+    "/app/backend/tests/backend_test_iter11_lockout.py",
+    "/app/test_reports/pytest/iter12_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is 2539 lines — should be split into modules (auth/users/projects/etc) per the file-size guideline (>700).",
+    "Startup self-heal only clears lockout for ADMIN_EMAIL. If a non-admin user gets locked in prod and their env-driven admin is different, they still need /forgot-password. Acceptable — documented recovery path.",
+    "ADMIN_TEMP_PASSWORD default is hardcoded in source. Acceptable for preview but ensure production sets its own env var to avoid known-default risk (documented in test_credentials.md).",
+    "startup event uses deprecated @app.on_event('startup') — should migrate to FastAPI lifespan handler (non-blocking, tracking only)."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test_iter12_seed_selfheal.py"],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "n/a - skipped per request"},
+  "test_credentials": "deb@agrocorp.co.in / Admin@Agro@2026# (from /app/memory/test_credentials.md and backend/.env)",
+  "seed_data_creation": "None — used existing seeded admin. Test 3 temporarily rotated admin password to verify idempotency, then restored ADMIN_TEMP_PASSWORD hash. Final DB state: admin active, must_reset_password=true, ADMIN_TEMP_PASSWORD active, no lockout entries.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter12 verified auth self-heal + code defaults. Tests restart the backend (via sudo supervisorctl) 3 times — that is expected. Both test files (iter11 lockout + iter12 seed/self-heal) are the current auth regression suite; run them after any auth/startup changes.",
+  "rca of the issue": "Production login for deb@agrocorp.co.in failed because previous server.py hardcoded old Vista defaults; on Emergent K8s prod .env isn't loaded so os.environ.get() defaults kicked in and seeded the OLD admin. Fix confirmed: defaults switched to deb@agrocorp.co.in/Admin@Agro@2026#/Agrocorp Admin and startup now reactivates + clears lockout for the configured admin on every boot. When user redeploys prod, the missing deb@agrocorp.co.in user will be auto-seeded on next startup."
+}

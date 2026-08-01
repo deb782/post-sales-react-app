@@ -45,8 +45,9 @@ EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY")
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALG = "HS256"
 ACCESS_TOKEN_TTL = timedelta(days=7)
-ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@vistaestates.com").lower()
-ADMIN_TEMP_PASSWORD = os.environ.get("ADMIN_TEMP_PASSWORD", "Vista@Admin#2026")
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "deb@agrocorp.co.in").lower()
+ADMIN_TEMP_PASSWORD = os.environ.get("ADMIN_TEMP_PASSWORD", "Admin@Agro@2026#")
+ADMIN_NAME = os.environ.get("ADMIN_NAME", "Agrocorp Admin")
 APP_PUBLIC_URL = os.environ.get("APP_PUBLIC_URL", "")
 APP_NAME = "realestate-dashboard"
 
@@ -2502,17 +2503,28 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup():
     init_storage()
-    # seed admin if none exists
+    # seed admin if the env-configured one is missing
     existing = await db.users.find_one({"email": ADMIN_EMAIL}, {"_id": 0})
     if not existing:
         admin = User(
-            email=ADMIN_EMAIL, name="System Administrator",
+            email=ADMIN_EMAIL, name=ADMIN_NAME,
             role="admin", project_ids=[],
             password_hash=hash_pw(ADMIN_TEMP_PASSWORD),
             must_reset_password=True,
+            is_active=True,
         )
         await db.users.insert_one(admin.model_dump())
         log.info("Seeded admin user: %s", ADMIN_EMAIL)
+    else:
+        # If the seeded admin is inactive (e.g. accidentally deactivated),
+        # re-activate them so the app is never locked out entirely.
+        if not existing.get("is_active", True):
+            await db.users.update_one(
+                {"email": ADMIN_EMAIL},
+                {"$set": {"is_active": True}})
+            log.info("Re-activated admin user: %s", ADMIN_EMAIL)
+        # Always clear any stale lockout for the configured admin on startup.
+        await db.login_attempts.delete_one({"_id": f"login:{ADMIN_EMAIL}"})
     # indexes
     try:
         await db.users.create_index("email", unique=True)
