@@ -98,7 +98,7 @@ export default function Onboarding() {
                   {TEAM_ROLES.map(r => (
                     <SelectItem key={r} value={r} data-testid={`role-option-${r}`}>{ROLE_LABELS[r]}</SelectItem>
                   ))}
-                  <SelectItem value="site_manager">{ROLE_LABELS.site_manager}</SelectItem>
+                  <SelectItem value="site_manager" data-testid="role-option-site_manager">{ROLE_LABELS.site_manager}</SelectItem>
                 </SelectContent>
               </Select>
             </Field>
