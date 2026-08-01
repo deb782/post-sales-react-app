@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet } from "react-router-dom";
 import { useAuth, ROLE_LABELS } from "@/lib/auth";
 import { useBranding } from "@/lib/branding";
 import {
@@ -19,7 +19,7 @@ const NAV = [
   { to: "/expenses", label: "Expenses", icon: Receipt, roles: ["admin","management","accounts","site_manager"] },
   { to: "/stock", label: "Stock Book", icon: Boxes, roles: ["admin","management","site_manager"] },
   { to: "/tickets", label: "Tickets", icon: TicketCheck, roles: ["admin","management","site_manager"] },
-  { to: "/users", label: "Users", icon: UsersIcon, roles: ["admin"] },
+  { to: "/users", label: "Users", icon: UsersIcon, roles: ["admin", "management"] },
   { to: "/import", label: "Excel Import", icon: Upload, roles: ["admin","management"] },
   { to: "/audit", label: "Audit Log", icon: ScrollText, roles: ["admin"] },
   { to: "/settings", label: "Settings", icon: SettingsIcon, roles: ["admin","management"] },
@@ -28,7 +28,6 @@ const NAV = [
 export default function Layout() {
   const { user, logout } = useAuth();
   const { company_name, logo_url } = useBranding();
-  const nav = useNavigate();
 
   const visible = NAV.filter((n) => n.roles.includes(user.role));
 
@@ -65,15 +64,26 @@ export default function Layout() {
         </nav>
 
         <div className="p-3 border-t border-stone-800">
-          <div className="flex items-center gap-3 px-2 py-2">
-            <div className="w-9 h-9 rounded-full bg-emerald-800 flex items-center justify-center text-sm font-semibold">
-              {user.name?.[0]?.toUpperCase()}
-            </div>
-            <div className="min-w-0">
+          <NavLink
+            to="/profile"
+            data-testid="nav-profile"
+            className="flex items-center gap-3 px-2 py-2 rounded-md hover:bg-stone-800 transition-colors"
+          >
+            {user.picture ? (
+              <img src={user.picture.startsWith("/api")
+                ? `${process.env.REACT_APP_BACKEND_URL}${user.picture}`
+                : user.picture}
+                alt="" className="w-9 h-9 rounded-full object-cover" />
+            ) : (
+              <div className="w-9 h-9 rounded-full bg-emerald-800 flex items-center justify-center text-sm font-semibold">
+                {user.name?.[0]?.toUpperCase()}
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
               <div className="text-sm font-medium truncate">{user.name}</div>
               <div className="text-[11px] text-stone-400">{ROLE_LABELS[user.role]}</div>
             </div>
-          </div>
+          </NavLink>
           <button
             data-testid="logout-btn"
             onClick={logout}

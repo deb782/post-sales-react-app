@@ -21,6 +21,7 @@ import ImportExcel from "@/pages/ImportExcel";
 import Sales from "@/pages/Sales";
 import CRM from "@/pages/CRM";
 import Tickets from "@/pages/Tickets";
+import Profile from "@/pages/Profile";
 
 function Protected({ children, roles }) {
   const { user, loading } = useAuth();
@@ -60,7 +61,8 @@ function AppRouter() {
         <Route path="/expenses" element={<Expenses />} />
         <Route path="/stock" element={<Stock />} />
         <Route path="/tickets" element={<Protected roles={["admin","management","site_manager"]}><Tickets /></Protected>} />
-        <Route path="/users" element={<Protected roles={["admin"]}><Users /></Protected>} />
+        <Route path="/users" element={<Protected roles={["admin", "management"]}><Users /></Protected>} />
+        <Route path="/profile" element={<Profile />} />
         <Route path="/import" element={<Protected roles={["admin","management"]}><ImportExcel /></Protected>} />
         <Route path="/audit" element={<Protected roles={["admin"]}><AuditLog /></Protected>} />
         <Route path="/settings" element={<Protected roles={["admin","management"]}><Settings /></Protected>} />

@@ -1,0 +1,40 @@
+{
+  "summary": "Iter10 focused testing of Users management (admin + management) and new /profile self-service. Backend pytest: 18/18 PASS on /app/backend/tests/backend_test_iter10.py — covers admin invite/reset/patch/deactivate/reactivate, admin self-deactivate 400, management guards (cannot create/edit/reset/deactivate admin → 403, cannot promote to admin → 403, but can manage non-admins), PATCH /me/profile allowed keys only (name/phone/picture; role & email ignored → 400 when only disallowed keys sent), auth/change-password (wrong current → 400, success). Frontend Playwright: admin login → /users → invite Sales user with data-testid=user-name-input/user-email-input/user-role-select/save-user-btn, last-invite-panel showed temp password & login URL ✓; kebab menu (user-actions-<email>) exposed edit / reset / deactivate items with correct testids ✓; edit-user dialog saved name update and it reflected in table ✓; reset-user showed reset-panel with fresh temp password ✓; deactivate → confirm-deactivate-btn hid row (opacity 50 filtered out) and show-inactive-toggle brought it back ✓; reactivate-user-<email> restored is_active ✓. /profile route loaded for admin with profile-root, prefilled name, disabled email/role, password-rule checklist working, save-password-btn correctly disabled until current+all rules match ✓. Sidebar user card (data-testid=nav-profile) is clickable and navigates to /profile ✓.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "All Dialogs (Invite / Edit / Deactivate confirm)", "issues": ["Radix DialogContent missing aria-describedby — a11y warning in console. Non-blocking. Add <DialogDescription> or aria-describedby to silence."]},
+      {"screen": "Dashboard on nav-away", "issues": ["Recharts still warns width(-1)/height(-1) at mount transition — same cosmetic warning noted in iter9. Non-blocking."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test_iter10.py",
+    "/app/test_reports/pytest/iter10.xml"
+  ],
+  "action_items": [
+    "(minor a11y) Add <DialogDescription> or aria-describedby to Invite / Edit / Deactivate / Change-password dialogs to remove Radix a11y warnings.",
+    "(nice-to-have) Also render a data-testid on the invite dropdown's <SelectItem> so automation can select Sales/CRM/etc via testid instead of role+name text lookup (currently works via role name)."
+  ],
+  "critical_code_review_comments": [
+    "server.py L819-822 _mgmt_cannot_touch_admin is correctly invoked in reset/patch/delete/reactivate paths.",
+    "server.py L897-898 update_user separately blocks management from promoting anyone to admin — good, defense-in-depth beyond _mgmt_cannot_touch_admin (which only blocks touching a user whose CURRENT role is admin).",
+    "server.py L914-915 self-deactivation returns 400 before role check — correct order (own-account block is stronger than admin-touch block).",
+    "server.py L939-951 PATCH /me/profile whitelists exactly {name,phone,picture}. If only disallowed keys sent it 400s ('Nothing to update'). Role/email cannot be self-escalated — verified.",
+    "server.py L954-974 POST /me/picture uploads to object storage, records in files collection with is_public=True, then sets user.picture to /api/files/{id}/download — clean flow, no _id leak.",
+    "Users.jsx L41 canManageThis correctly disables kebab for admin rows when management is logged in — matches server-side 403 guards.",
+    "Users.jsx L42 availableRoles filter hides 'admin' from role dropdown for management — matches server-side 403 on create/patch admin.",
+    "Profile.jsx L40 pwValid + button disabled state prevents client-side submission with weak/mismatched password; live checklist gives clear UX.",
+    "Profile.jsx L30 pic URL rewrite ${API_BASE}${picture.replace('/api','')} is fragile if picture path doesn't start with /api (e.g. absolute S3 URL later) — it will fall through to the else branch OK, but consider a URL() check to be safer.",
+    "Users.jsx & Profile.jsx are both well under 700 lines and reuse Field/PasswordInput sub-components cleanly."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test_iter10.py"],
+  "success_rate": {"backend": "100% (18/18)", "frontend": "100% on tested Users + Profile UI flows"},
+  "test_credentials": "Admin: sales@agrocorp.co.in / Agrocorp@2026#. Iter10 seeded management user test_mgmt_<random>@agrocorp.co.in / MgmtIter10#Round2 (after its own change-password round trip), plus several test_ui_<ts>@ / test_invite_<uuid>@ / test_sales_<uuid>@ / test_mgmt_invite_<uuid>@ / test_mgmt_admin_<uuid>@ scratch accounts. All are TEST_ prefixed for easy cleanup.",
+  "seed_data_creation": "18 backend test accounts + 1 UI test account (test_ui_<ts>@agrocorp.co.in as Sales, went through invite → edit → reset → deactivate → reactivate lifecycle). No project/unit/ticket seed data created this iter.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Users mgmt v2 (Users.jsx) + Profile self-service are stable. Backend 100% + UI 100% on Users + Profile. Not UI-verified this iter (but covered by backend): (a) management-role UI hiding Admin from role dropdown and disabling kebab on admin rows — backend 403 guards fully verified in TestManagementGuards; visual confirmation would be quick. (b) picture upload UI + refresh avatar — /api/me/picture endpoint code-reviewed clean. (c) Site-manager 'My Projects' sidebar on /profile — code path exists (Profile.jsx L195-213) and gated by role==='site_manager'. Recommend a 5-min UI spot-check on those 3 if a next iter runs.",
+  "rca_of_the_issue": "N/A — no bugs surfaced."
+}

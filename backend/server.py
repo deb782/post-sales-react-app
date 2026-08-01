@@ -816,15 +816,24 @@ async def change_password(payload: ChangePasswordRequest,
 
 
 # ------------------------------------------------------ users --------------
+def _mgmt_cannot_touch_admin(actor: User, target: dict) -> None:
+    """Management is not allowed to modify Admin accounts."""
+    if actor.role == "management" and target.get("role") == "admin":
+        raise HTTPException(403, "Management cannot modify Admin accounts")
+
+
 @api.get("/users")
-async def list_users(user: User = Depends(require_roles("admin"))):
+async def list_users(user: User = Depends(require_roles("admin", "management"))):
     docs = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
     return docs
 
 
 @api.post("/users")
 async def create_user(payload: UserCreate,
-                      user: User = Depends(require_roles("admin"))):
+                      user: User = Depends(require_roles("admin", "management"))):
+    # Management cannot create admins
+    if user.role == "management" and payload.role == "admin":
+        raise HTTPException(403, "Management cannot create Admin accounts")
     existing = await db.users.find_one({"email": payload.email.lower()})
     if existing:
         raise HTTPException(400, "User with this email already exists")
@@ -852,11 +861,12 @@ async def create_user(payload: UserCreate,
 
 @api.post("/users/{user_id}/reset-password")
 async def admin_reset_password(user_id: str,
-                               actor: User = Depends(require_roles("admin"))):
-    """Admin regenerates a temp password for a locked-out user."""
+                               actor: User = Depends(require_roles("admin", "management"))):
+    """Admin/Management regenerates a temp password for a user."""
     u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     if not u:
         raise HTTPException(404, "User not found")
+    _mgmt_cannot_touch_admin(actor, u)
     temp_pw = gen_temp_password()
     await db.users.update_one(
         {"user_id": user_id},
@@ -875,10 +885,17 @@ async def admin_reset_password(user_id: str,
 
 @api.patch("/users/{user_id}")
 async def update_user(user_id: str, payload: UserUpdate,
-                      user: User = Depends(require_roles("admin"))):
+                      user: User = Depends(require_roles("admin", "management"))):
+    target = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(404, "User not found")
+    _mgmt_cannot_touch_admin(user, target)
     update = {k: v for k, v in payload.model_dump().items() if v is not None}
     if not update:
         raise HTTPException(400, "Nothing to update")
+    # Management cannot promote anyone to admin
+    if user.role == "management" and update.get("role") == "admin":
+        raise HTTPException(403, "Management cannot assign Admin role")
     r = await db.users.update_one({"user_id": user_id}, {"$set": update})
     if r.matched_count == 0:
         raise HTTPException(404, "User not found")
@@ -890,13 +907,71 @@ async def update_user(user_id: str, payload: UserUpdate,
 
 @api.delete("/users/{user_id}")
 async def deactivate_user(user_id: str,
-                          user: User = Depends(require_roles("admin"))):
+                          user: User = Depends(require_roles("admin", "management"))):
+    target = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(404, "User not found")
+    if user.user_id == user_id:
+        raise HTTPException(400, "You cannot deactivate yourself")
+    _mgmt_cannot_touch_admin(user, target)
     r = await db.users.update_one({"user_id": user_id},
                                   {"$set": {"is_active": False}})
     if r.matched_count == 0:
         raise HTTPException(404, "User not found")
     await audit(user.user_id, "deactivate_user", "user", user_id, {})
     return {"ok": True}
+
+
+@api.post("/users/{user_id}/reactivate")
+async def reactivate_user(user_id: str,
+                          user: User = Depends(require_roles("admin", "management"))):
+    target = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(404, "User not found")
+    _mgmt_cannot_touch_admin(user, target)
+    await db.users.update_one({"user_id": user_id},
+                              {"$set": {"is_active": True}})
+    await audit(user.user_id, "reactivate_user", "user", user_id, {})
+    return {"ok": True}
+
+
+# ------------------------------------------------------ profile (self) ----
+@api.patch("/me/profile")
+async def update_my_profile(payload: dict,
+                            user: User = Depends(get_current_user)):
+    """A user updates their own name / phone / picture."""
+    allowed = {"name", "phone", "picture"}
+    update = {k: v for k, v in payload.items() if k in allowed and v is not None}
+    if not update:
+        raise HTTPException(400, "Nothing to update")
+    await db.users.update_one({"user_id": user.user_id}, {"$set": update})
+    await audit(user.user_id, "update_profile", "user", user.user_id, update)
+    doc = await db.users.find_one({"user_id": user.user_id},
+                                  {"_id": 0, "password_hash": 0})
+    return doc
+
+
+@api.post("/me/picture")
+async def upload_my_picture(file: UploadFile = File(...),
+                            user: User = Depends(get_current_user)):
+    data = await file.read()
+    ct = file.content_type or "image/jpeg"
+    ext = ct.split("/")[-1] if "/" in ct else "jpg"
+    path = f"{APP_NAME}/avatars/{user.user_id}.{ext}"
+    result = put_object(path, data, ct)
+    file_id = new_id("file")
+    from datetime import datetime, timezone
+    await db.files.insert_one({
+        "file_id": file_id, "storage_path": result["path"],
+        "original_filename": file.filename or "avatar",
+        "content_type": ct, "size": result.get("size", len(data)),
+        "uploaded_by": user.user_id, "is_deleted": False, "is_public": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    pic_url = f"/api/files/{file_id}/download"
+    await db.users.update_one({"user_id": user.user_id},
+                              {"$set": {"picture": pic_url}})
+    return {"picture": pic_url}
 
 
 # ------------------------------------------------------ projects -----------
