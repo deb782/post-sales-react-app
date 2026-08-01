@@ -2325,6 +2325,20 @@ async def units_bulk_template(
 
 # ------------------------------------------------------ mount -------------
 app.include_router(api)
+
+
+@app.get("/health")
+async def health_root():
+    """Kubernetes liveness/readiness probe."""
+    return {"status": "ok"}
+
+
+@app.get("/api/health")
+async def health_api():
+    """Same as /health, prefixed for the app ingress."""
+    return {"status": "ok"}
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
