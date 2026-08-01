@@ -14,9 +14,10 @@ from motor.motor_asyncio import AsyncIOMotorClient
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
-ADMIN_EMAIL = "sales@agrocorp.co.in"
-ADMIN_NAME = "Agrocorp Admin"
-COMPANY_NAME = "Agrocorp Admin"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "deb@agrocorp.co.in").lower()
+ADMIN_NAME = os.environ.get("ADMIN_NAME", "Agrocorp Admin")
+ADMIN_TEMP_PASSWORD = os.environ.get("ADMIN_TEMP_PASSWORD", "")
+COMPANY_NAME = os.environ.get("COMPANY_NAME", "Agrocorp Admin")
 
 # Client-provided Agrocorp logo (uploaded via chat)
 LOGO_URL = (
@@ -113,7 +114,7 @@ async def main() -> str:
     for name in set(existing) | set(COLLECTIONS):
         await db[name].drop()
 
-    temp_pw = gen_password()
+    temp_pw = ADMIN_TEMP_PASSWORD or gen_password()
     password_hash = bcrypt.hashpw(
         temp_pw.encode(), bcrypt.gensalt()).decode()
 
