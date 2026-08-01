@@ -19,7 +19,9 @@ api.interceptors.response.use(
   (err) => {
     if (err?.response?.status === 401) {
       localStorage.removeItem("access_token");
-      if (!window.location.pathname.startsWith("/login")) {
+      const p = window.location.pathname;
+      const publicPaths = ["/login", "/forgot-password"];
+      if (!publicPaths.some((x) => p.startsWith(x))) {
         window.location.href = "/login";
       }
     }

@@ -6,6 +6,7 @@ import { BrandingProvider } from "@/lib/branding";
 import { OnboardingProvider } from "@/lib/onboarding";
 import Login from "@/pages/Login";
 import ResetPassword from "@/pages/ResetPassword";
+import ForgotPassword from "@/pages/ForgotPassword";
 import Onboarding from "@/pages/Onboarding";
 import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
@@ -47,6 +48,7 @@ function AppRouter() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<Protected><ResetPassword /></Protected>} />
       <Route path="/onboarding" element={<Protected roles={["admin"]}><Onboarding /></Protected>} />
       <Route path="/" element={<Navigate to="/dashboard" replace />} />

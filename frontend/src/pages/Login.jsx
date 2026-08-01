@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "@/lib/auth";
 import { useBranding } from "@/lib/branding";
 import { Button } from "@/components/ui/button";
@@ -77,7 +77,10 @@ export default function Login() {
               <Input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required autoFocus className="mt-1 h-11" data-testid="login-email-input" />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-widest text-stone-500">Password</label>
+              <div className="flex items-baseline justify-between">
+                <label className="text-xs uppercase tracking-widest text-stone-500">Password</label>
+                <Link to="/forgot-password" className="text-xs text-emerald-800 hover:text-emerald-900 hover:underline" data-testid="forgot-password-link">Forgot password?</Link>
+              </div>
               <div className="relative">
                 <Input value={password} onChange={(e) => setPassword(e.target.value)} type={showPw ? "text" : "password"} required className="mt-1 h-11 pr-10" data-testid="login-password-input" />
                 <button type="button" onClick={() => setShowPw(!showPw)} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-500 hover:text-stone-800">

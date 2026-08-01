@@ -815,6 +815,71 @@ async def change_password(payload: ChangePasswordRequest,
     return {"ok": True}
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+@api.post("/auth/forgot-password")
+async def forgot_password(payload: ForgotPasswordRequest):
+    """
+    Public — self-service password reset.
+    Always returns success so we don't leak which emails are registered.
+    If the user exists AND is active, we rotate their password to a fresh
+    temp and email it. They'll be forced to reset it on next login.
+    """
+    email = (payload.email or "").strip().lower()
+    generic = {
+        "ok": True,
+        "message": ("If an account exists with that email, "
+                    "a temporary password has been sent."),
+    }
+    if not email:
+        return generic
+
+    # simple throttle: max 5 requests / 15 minutes per email
+    key = f"forgot:{email}"
+    now_ts = datetime.now(timezone.utc)
+    attempt = await db.login_attempts.find_one({"_id": key}) or {}
+    window_start = attempt.get("window_start")
+    count = attempt.get("count", 0)
+    if window_start:
+        try:
+            w = datetime.fromisoformat(window_start)
+            if (now_ts - w).total_seconds() < 900 and count >= 5:
+                return generic  # silently drop over-limit
+            if (now_ts - w).total_seconds() >= 900:
+                count = 0
+                window_start = None
+        except ValueError:
+            pass
+    if not window_start:
+        window_start = now_ts.isoformat()
+    await db.login_attempts.update_one(
+        {"_id": key},
+        {"$set": {"window_start": window_start, "count": count + 1}},
+        upsert=True)
+
+    u = await db.users.find_one({"email": email, "is_active": True},
+                                {"_id": 0})
+    if not u:
+        return generic
+
+    temp_pw = gen_temp_password()
+    await db.users.update_one(
+        {"user_id": u["user_id"]},
+        {"$set": {"password_hash": hash_pw(temp_pw),
+                  "must_reset_password": True}})
+    # clear failed-login lockout for this account
+    await db.login_attempts.delete_one({"_id": f"login:{email}"})
+    await audit(u["user_id"], "forgot_password", "user", u["user_id"],
+                {"channel": "self_service"})
+    login_url = f"{APP_PUBLIC_URL}/login" if APP_PUBLIC_URL else "/login"
+    send_email(
+        u["email"], "Password reset — your temporary password",
+        invite_email_html(u["name"], u["email"], temp_pw, login_url))
+    return generic
+
+
 # ------------------------------------------------------ users --------------
 def _mgmt_cannot_touch_admin(actor: User, target: dict) -> None:
     """Management is not allowed to modify Admin accounts."""
