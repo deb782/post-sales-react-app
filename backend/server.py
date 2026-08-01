@@ -744,28 +744,37 @@ def invite_email_html(name: str, email: str, temp_pw: str,
 async def auth_login(payload: LoginRequest, response: Response):
     email = payload.email.lower()
     key = f"login:{email}"
+    now_ts = datetime.now(timezone.utc)
     lock = await db.login_attempts.find_one({"_id": key})
+
+    # If a lockout window is still active, deny with remaining time
     if lock and lock.get("locked_until"):
         lu = datetime.fromisoformat(lock["locked_until"])
         if lu.tzinfo is None:
             lu = lu.replace(tzinfo=timezone.utc)
-        if lu > datetime.now(timezone.utc):
+        if lu > now_ts:
+            mins = max(1, int((lu - now_ts).total_seconds() // 60) + 1)
             raise HTTPException(
                 429,
-                "Too many failed attempts. Try again in a few minutes.")
+                f"Too many failed attempts. Please try again in "
+                f"{mins} minute{'s' if mins != 1 else ''} — or "
+                f"use 'Forgot password' to reset instantly.")
+        # Cooldown expired — start fresh
+        await db.login_attempts.delete_one({"_id": key})
+        lock = None
 
     user = await db.users.find_one({"email": email}, {"_id": 0})
     if not user or not user.get("password_hash") \
             or not verify_pw(payload.password, user["password_hash"]):
-        # increment failed attempts
+        # Increment failed attempts; lock for 15 min on the 5th failure
+        prev_count = lock.get("count", 0) if lock else 0
+        new_count = prev_count + 1
+        locked_until = (now_ts + timedelta(minutes=15)).isoformat() \
+            if new_count >= 5 else None
         await db.login_attempts.update_one(
             {"_id": key},
-            {"$inc": {"count": 1},
-             "$set": {"last_at": now(),
-                      "locked_until":
-                      (datetime.now(timezone.utc) + timedelta(minutes=15))
-                      .isoformat() if lock and lock.get("count", 0) >= 4
-                      else None}},
+            {"$set": {"count": new_count, "last_at": now(),
+                      "locked_until": locked_until}},
             upsert=True,
         )
         raise HTTPException(401, "Invalid email or password")
