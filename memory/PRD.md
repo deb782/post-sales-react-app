@@ -36,9 +36,16 @@ Hierarchy: **Admin → Management → Accounts → Sales → CRM → Site Manage
 - New collections: `payment_templates`, `installments`, `tickets`.
 
 ## Testing status (Feb 2026)
-- Backend regression suite: `/app/backend/tests/backend_test_iter9.py` — **22/22 PASS**.
-- Frontend: onboarding → skip → dashboard verified. Sales role RBAC nav verified.
-- Last test report: `/app/test_reports/iteration_9.json` — `retest_needed: false`.
+- Iter9 (v2 rework): `/app/backend/tests/backend_test_iter9.py` — **22/22 PASS**.
+- Iter10 (Users mgmt + Profile): `/app/backend/tests/backend_test_iter10.py` — **18/18 PASS**.
+- Last test reports: `/app/test_reports/iteration_9.json` and `iteration_10.json` — `retest_needed: false`.
+
+## User management (Iter10)
+- Admin **and** Management can invite, edit, reset passwords, deactivate, and reactivate users.
+- Management is guarded from touching Admin accounts and from promoting anyone to Admin.
+- `DELETE /users/{id}` is a soft delete (`is_active=false`). `POST /users/{id}/reactivate` flips it back.
+- Every logged-in user has a `/profile` page: hero + avatar upload + personal-details form + change-password with live rule checklist. Site Managers also see a "My Projects" sidebar there.
+- Sidebar user card is now a link to `/profile`.
 
 ## Deployment
 Preview: https://property-ops-60.preview.emergentagent.com · Production: https://property-ops-60.emergent.host (redeploy needed to publish this rework).
