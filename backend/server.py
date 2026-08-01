@@ -753,7 +753,8 @@ async def auth_login(payload: LoginRequest, response: Response):
         if lu.tzinfo is None:
             lu = lu.replace(tzinfo=timezone.utc)
         if lu > now_ts:
-            mins = max(1, int((lu - now_ts).total_seconds() // 60) + 1)
+            secs_left = (lu - now_ts).total_seconds()
+            mins = min(15, max(1, -(-int(secs_left) // 60)))  # ceil, capped at 15
             raise HTTPException(
                 429,
                 f"Too many failed attempts. Please try again in "
