@@ -6,18 +6,16 @@ import { toast } from "sonner";
 import { Download, Upload, FileSpreadsheet } from "lucide-react";
 
 const KINDS = [
-  { key: "projects", label: "Projects", cols: ["name", "location", "description", "target_revenue"] },
-  { key: "units", label: "Units", cols: ["project_id", "unit_type", "unit_number", "price"] },
   { key: "stock_items", label: "Stock Items", cols: ["project_id", "name", "unit", "opening", "vendor"] },
 ];
 
 export default function ImportExcel() {
   const [file, setFile] = useState(null);
-  const [kind, setKind] = useState("projects");
+  const [kind, setKind] = useState("stock_items");
   const [result, setResult] = useState(null);
 
   const downloadTemplate = async (k) => {
-    const token = localStorage.getItem("session_token") || "";
+    const token = localStorage.getItem("access_token") || "";
     const r = await fetch(`${API_BASE}/excel/template/${k}`, {
       headers: { Authorization: `Bearer ${token}` },
       credentials: "include",

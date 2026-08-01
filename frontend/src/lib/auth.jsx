@@ -45,9 +45,16 @@ export const useAuth = () => useContext(AuthCtx);
 
 export const ROLE_LABELS = {
   admin: "Admin",
-  accounts: "Accounts",
   management: "Management",
+  accounts: "Accounts",
+  sales: "Sales",
+  crm: "CRM",
   site_manager: "Site Manager",
 };
 
+export const ROLE_ORDER = ["admin", "management", "accounts", "sales", "crm", "site_manager"];
+
 export const can = (user, ...roles) => user && roles.includes(user.role);
+
+/** Users allowed to run the full setup flow. */
+export const canSetup = (user) => can(user, "admin", "management");

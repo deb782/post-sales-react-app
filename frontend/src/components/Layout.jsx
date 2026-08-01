@@ -4,22 +4,25 @@ import { useBranding } from "@/lib/branding";
 import {
   LayoutDashboard, Building2, Home, Wallet, Receipt, Boxes,
   Users as UsersIcon, Upload, Settings as SettingsIcon,
-  ScrollText, LogOut,
+  ScrollText, LogOut, TicketCheck, HandCoins, Handshake,
 } from "lucide-react";
 import NotificationsBell from "@/components/NotificationsBell";
 import GlobalSearch from "@/components/GlobalSearch";
 
 const NAV = [
-  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["admin","accounts","management","site_manager"] },
-  { to: "/projects", label: "Projects", icon: Building2, roles: ["admin","accounts","management","site_manager"] },
-  { to: "/units", label: "Inventory", icon: Home, roles: ["admin","accounts","management","site_manager"] },
+  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["admin","management","accounts","sales","crm","site_manager"] },
+  { to: "/projects", label: "Projects", icon: Building2, roles: ["admin","management","accounts","sales","crm","site_manager"] },
+  { to: "/units", label: "Inventory", icon: Home, roles: ["admin","management","accounts","sales","crm","site_manager"] },
+  { to: "/sales", label: "Sales", icon: Handshake, roles: ["admin","management","sales"] },
+  { to: "/crm", label: "CRM", icon: HandCoins, roles: ["admin","management","crm","accounts"] },
   { to: "/revenue", label: "Revenue", icon: Wallet, roles: ["admin","accounts","management"] },
-  { to: "/expenses", label: "Expenses", icon: Receipt, roles: ["admin","accounts","management","site_manager"] },
-  { to: "/stock", label: "Stock Book", icon: Boxes, roles: ["admin","site_manager"] },
+  { to: "/expenses", label: "Expenses", icon: Receipt, roles: ["admin","management","accounts","site_manager"] },
+  { to: "/stock", label: "Stock Book", icon: Boxes, roles: ["admin","management","site_manager"] },
+  { to: "/tickets", label: "Tickets", icon: TicketCheck, roles: ["admin","management","site_manager"] },
   { to: "/users", label: "Users", icon: UsersIcon, roles: ["admin"] },
-  { to: "/import", label: "Excel Import", icon: Upload, roles: ["admin"] },
+  { to: "/import", label: "Excel Import", icon: Upload, roles: ["admin","management"] },
   { to: "/audit", label: "Audit Log", icon: ScrollText, roles: ["admin"] },
-  { to: "/settings", label: "Settings", icon: SettingsIcon, roles: ["admin"] },
+  { to: "/settings", label: "Settings", icon: SettingsIcon, roles: ["admin","management"] },
 ];
 
 export default function Layout() {

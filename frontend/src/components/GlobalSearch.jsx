@@ -57,7 +57,7 @@ export default function GlobalSearch() {
                 <CommandGroup heading="Units">
                   {results.units.map((u) => (
                     <CommandItem key={u.unit_id} onSelect={() => { setOpen(false); window.location.href = "/units"; }}>
-                      {u.unit_number} <span className="ml-auto text-xs text-stone-500">{u.status}</span>
+                      {u.plot_number} <span className="ml-auto text-xs text-stone-500">{u.status}</span>
                     </CommandItem>
                   ))}
                 </CommandGroup>

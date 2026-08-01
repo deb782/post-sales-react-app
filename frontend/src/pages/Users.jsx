@@ -15,7 +15,7 @@ import { Plus, UserCog } from "lucide-react";
 import { toast } from "sonner";
 import { ROLE_LABELS } from "@/lib/auth";
 
-const ROLES = ["admin", "accounts", "management", "site_manager"];
+const ROLES = ["admin", "management", "accounts", "sales", "crm", "site_manager"];
 
 export default function Users() {
   const [items, setItems] = useState([]);

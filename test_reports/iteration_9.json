@@ -1,0 +1,34 @@
+{
+  "summary": "Iter9 comprehensive test of the Agrocorp v2 rework (6 roles, Sales/CRM/Tickets workflow, 2 project types, PLCs, payment templates, installments lifecycle). Backend: 22/22 pytest cases PASS on backend_test_iter9.py — auth force-reset, /onboarding/status (7-step keys password_reset/add_management/add_accounts/add_sales/add_crm/add_project/assign_site_manager), user creation for all 5 non-admin roles, 422 on invalid role, project types schema returns exactly {residential, plots_land}, 422 on villa/commercial/mixed, payment template creation with 100% sum validation + 400 on non-100, unit create with plot_number/size/facing/PLCs, sell→crm_pending, double-sell 400, schedule create→crm_scheduled, initiate→accounts_tracking, reflect creates payment record, ticket create+resolve by admin, bulk-template .xlsx download, RBAC (sales cannot POST /projects → 403 but can GET /units). Frontend: Admin login with temp password sales@agrocorp.co.in / ot3C4qbfb91YJa → forced reset → landed on /onboarding with data-testid=onboarding-root ✓, all 4 role tiles (management/accounts/sales/crm) present ✓, invite-role-select dropdown lists 5 roles including Site Manager ✓, invite of TEST Sales user succeeded and displayed temp password + login URL ✓, 'Skip to dashboard' navigates to /dashboard ✓. Dashboard shows Setup Progress 6 of 7 with all 7 step labels crossed off except 'Assign a Site Manager' ✓, KPI cards (Projects 2, Units Sold 1/1, Revenue Received ₹5,10,000, Approvals Pending 0) ✓, Revenue Overview with project rollup dropdown ✓, Project Status cards for both projects ✓. Admin nav has all 13 items. Sales user (post reset) sees ONLY Dashboard/Projects/Inventory/Sales — no Users/Audit/Settings/Excel Import/Stock/Tickets/Revenue/Expenses/CRM ✓, matching acceptance criteria exactly.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Onboarding role dropdown", "issues": ["The Site Manager <SelectItem> in Onboarding.jsx line 101 is missing data-testid='role-option-site_manager' (all other 4 have it). Non-blocking — text lookup works — but inconsistent for automation."]},
+      {"screen": "Dashboard", "issues": ["Recharts warns 'width(-1) and height(-1)' repeatedly at initial mount (chart container measures before layout). Non-blocking cosmetic warning."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/backend_test_iter9.py", "/app/test_reports/pytest/iter9.xml"],
+  "action_items": [
+    "(minor) Add data-testid='role-option-site_manager' to the Site Manager SelectItem in /app/frontend/src/pages/Onboarding.jsx line 101 for consistency."
+  ],
+  "critical_code_review_comments": [
+    "server.py L2179-2221 /onboarding/status correctly returns 7 keys in the requested order. system_ready flag is computed. Good.",
+    "server.py L1011-1046 /units/{id}/sell: blocks re-sale of unit already in pipeline; notifies admin+accounts+crm via in-app + email — matches spec.",
+    "server.py L1146-1171 initiate_installment: transitions unit to accounts_tracking correctly; use of $in query on status is idempotent.",
+    "server.py L1174-1194 reflect_installment: also inserts a Payment row for revenue continuity — good, this keeps /revenue/summary consistent.",
+    "server.py L1077-1079 payment-templates sum check uses abs(total-100) > 0.01 tolerance — good for float rounding.",
+    "reset_and_seed.py drops all collections including new ones (uses set union of existing and known list) — clean-break behaviour is correct even though 'tickets','payment_templates','installments' aren't in COLLECTIONS list explicitly.",
+    "Layout.jsx: Sales role correctly hidden from Users/Audit/Settings/Excel Import/Stock/Tickets/Revenue/Expenses/CRM. Matches acceptance criteria.",
+    "Onboarding.jsx L101 Site Manager SelectItem missing data-testid — minor consistency nit."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test_iter9.py"],
+  "success_rate": {"backend": "100% (22/22)", "frontend": "100% on tested flows (onboarding + skip + dashboard + sales RBAC nav)"},
+  "test_credentials": "sales@agrocorp.co.in / Agrocorp@2026# (admin, temp ot3C4qbfb91YJa was rotated to this during test). Invited Sales UI user sales+ui5237@agrocorp.co.in / SalesUI#Pass2026 (temp was Yb4w$@G6&5Up, rotated).",
+  "seed_data_creation": "Created 22 test entities via pytest: 5 users (mgmt/accts/sales/crm/site_manager parametrized) + 2 RBAC user + 1 TEST_Proj_ + 1 TEST_Tpl_ + 1 unit + 3 installments + 1 ticket. All prefixed TEST_ where applicable. Plus via UI: 1 more sales user + 1 TEST_Proj_ from earlier iter runs still present.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Admin password now Agrocorp@2026#. Backend regression suite is /app/backend/tests/backend_test_iter9.py — run with REACT_APP_BACKEND_URL env var (defaults not set in shell). 6-role model and Sales/CRM/Tickets workflow fully verified end-to-end. Not explicitly UI-tested: Payment Template creation on /settings, CRM detail page /crm/{unit_id}, Units bulk-import upload UI, Tickets page create+resolve UI, Projects page 2-type restriction UI (all verified at API layer). If deeper UI regressions needed, focus there.",
+  "rca_of_the_issue": "N/A — no bugs surfaced. Everything requested was verified to work."
+}

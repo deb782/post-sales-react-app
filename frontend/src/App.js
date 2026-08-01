@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { BrandingProvider } from "@/lib/branding";
-import { OnboardingProvider, useOnboarding } from "@/lib/onboarding";
+import { OnboardingProvider } from "@/lib/onboarding";
 import Login from "@/pages/Login";
 import ResetPassword from "@/pages/ResetPassword";
 import Onboarding from "@/pages/Onboarding";
@@ -18,6 +18,9 @@ import Users from "@/pages/Users";
 import Settings from "@/pages/Settings";
 import AuditLog from "@/pages/AuditLog";
 import ImportExcel from "@/pages/ImportExcel";
+import Sales from "@/pages/Sales";
+import CRM from "@/pages/CRM";
+import Tickets from "@/pages/Tickets";
 
 function Protected({ children, roles }) {
   const { user, loading } = useAuth();
@@ -32,10 +35,8 @@ function Protected({ children, roles }) {
 
 function OnboardGate({ children }) {
   const { user } = useAuth();
-  const { status, loading } = useOnboarding();
-  if (loading) return <div className="p-8 text-stone-500">Loading…</div>;
-  // Admin must complete onboarding before rest of the app opens up.
-  if (user.role === "admin" && !user.onboarding_completed && !status?.system_ready) {
+  // Only admin passes through the onboarding wizard once
+  if (user.role === "admin" && !user.onboarding_completed) {
     return <Navigate to="/onboarding" replace />;
   }
   return children;
@@ -45,20 +46,24 @@ function AppRouter() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
-      <Route path="/reset-password" element={<Protected roles={undefined}><ResetPassword /></Protected>} />
+      <Route path="/reset-password" element={<Protected><ResetPassword /></Protected>} />
       <Route path="/onboarding" element={<Protected roles={["admin"]}><Onboarding /></Protected>} />
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route element={<Protected><OnboardGate><Layout /></OnboardGate></Protected>}>
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/projects" element={<Projects />} />
         <Route path="/units" element={<Units />} />
+        <Route path="/sales" element={<Protected roles={["admin","management","sales"]}><Sales /></Protected>} />
+        <Route path="/crm" element={<Protected roles={["admin","management","crm","accounts"]}><CRM /></Protected>} />
+        <Route path="/crm/:unitId" element={<Protected roles={["admin","management","crm","accounts"]}><CRM /></Protected>} />
         <Route path="/revenue" element={<Protected roles={["admin","accounts","management"]}><Revenue /></Protected>} />
         <Route path="/expenses" element={<Expenses />} />
         <Route path="/stock" element={<Stock />} />
+        <Route path="/tickets" element={<Protected roles={["admin","management","site_manager"]}><Tickets /></Protected>} />
         <Route path="/users" element={<Protected roles={["admin"]}><Users /></Protected>} />
-        <Route path="/import" element={<Protected roles={["admin"]}><ImportExcel /></Protected>} />
+        <Route path="/import" element={<Protected roles={["admin","management"]}><ImportExcel /></Protected>} />
         <Route path="/audit" element={<Protected roles={["admin"]}><AuditLog /></Protected>} />
-        <Route path="/settings" element={<Protected roles={["admin"]}><Settings /></Protected>} />
+        <Route path="/settings" element={<Protected roles={["admin","management"]}><Settings /></Protected>} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>

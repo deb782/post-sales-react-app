@@ -39,11 +39,11 @@ export default function Revenue() {
     ]);
     setSummary(s.data);
     setPayments(p.data);
-    setUnits(u.data.filter(x => x.status === "sold"));
+    setUnits(u.data.filter(x => ["sold","crm_pending","crm_scheduled","accounts_tracking"].includes(x.status)));
   };
   useEffect(() => { load(); }, [projectId]);
 
-  const unitLabel = useMemo(() => Object.fromEntries(units.map(u => [u.unit_id, u.unit_number])), [units]);
+  const unitLabel = useMemo(() => Object.fromEntries(units.map(u => [u.unit_id, u.plot_number])), [units]);
 
   const save = async () => {
     try {
@@ -89,7 +89,7 @@ export default function Revenue() {
                   <Select value={form.unit_id} onValueChange={(v) => setForm({ ...form, unit_id: v })}>
                     <SelectTrigger data-testid="payment-unit-select"><SelectValue placeholder="Sold unit" /></SelectTrigger>
                     <SelectContent>
-                      {units.map(u => <SelectItem key={u.unit_id} value={u.unit_id}>{u.unit_number} — {u.buyer_name}</SelectItem>)}
+                      {units.map(u => <SelectItem key={u.unit_id} value={u.unit_id}>{u.plot_number} — {u.owner_name || "—"}</SelectItem>)}
                     </SelectContent>
                   </Select>
                   <Input type="number" placeholder="Amount ₹" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} />

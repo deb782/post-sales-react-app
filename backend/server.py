@@ -106,7 +106,12 @@ def get_object(path: str) -> tuple[bytes, str]:
 
 
 # -------------------------------------------------------------- models -----
-Role = Literal["admin", "accounts", "management", "site_manager"]
+Role = Literal["admin", "management", "accounts", "sales", "crm", "site_manager"]
+ROLE_ORDER = ["admin", "management", "accounts", "sales", "crm", "site_manager"]
+ROLE_LABELS = {
+    "admin": "Admin", "management": "Management", "accounts": "Accounts",
+    "sales": "Sales", "crm": "CRM", "site_manager": "Site Manager",
+}
 ExpenseStatus = Literal["pending", "stage1_approved", "final_approved",
                         "rejected"]
 
@@ -166,7 +171,7 @@ class DashboardConfig(BaseModel):
     widgets: List[str]  # ordered widget ids the user wants to see
 
 
-ProjectType = Literal["residential", "commercial", "plot", "villa", "mixed"]
+ProjectType = Literal["residential", "plots_land"]
 
 
 class Project(BaseModel):
@@ -179,13 +184,12 @@ class Project(BaseModel):
     city: str = ""
     state: str = ""
     pincode: str = ""
-    description: str = ""
     developer: str = ""
     rera_number: str = ""
     start_date: Optional[str] = None
     expected_completion: Optional[str] = None
     total_units_planned: int = 0
-    target_revenue: float = 0
+    site_manager_id: Optional[str] = None
     image_url: Optional[str] = None
     is_active: bool = True
     created_at: str = Field(default_factory=now)
@@ -199,76 +203,156 @@ class ProjectCreate(BaseModel):
     city: str = ""
     state: str = ""
     pincode: str = ""
-    description: str = ""
     developer: str = ""
     rera_number: str = ""
     start_date: Optional[str] = None
     expected_completion: Optional[str] = None
     total_units_planned: int = 0
-    target_revenue: float = 0
+    site_manager_id: Optional[str] = None
     image_url: Optional[str] = None
 
 
-class UnitType(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    unit_type_id: str = Field(default_factory=lambda: new_id("utype"))
-    project_id: str
-    name: str  # e.g. 1BHK, Villa, Plot
-    default_price: float = 0
+class PLCEntry(BaseModel):
+    label: str
+    amount: float = 0
 
 
-class UnitTypeCreate(BaseModel):
-    project_id: str
-    name: str
-    default_price: float = 0
+UnitStatus = Literal["available", "sold", "crm_pending",
+                     "crm_scheduled", "accounts_tracking", "cancelled"]
 
 
 class Unit(BaseModel):
     model_config = ConfigDict(extra="ignore")
     unit_id: str = Field(default_factory=lambda: new_id("unit"))
     project_id: str
-    unit_type_id: Optional[str] = None
-    unit_number: str
+    plot_number: str  # e.g. P-101, A-12
+    size: str = ""  # e.g. "1200 sqft" or "30x40 ft"
+    facing: str = ""  # North / East etc
+    plcs: List[PLCEntry] = []
     price: float = 0
-    status: Literal["available", "reserved", "sold", "cancelled"] = "available"
-    buyer_name: Optional[str] = None
-    buyer_contact: Optional[str] = None
-    reserved_until: Optional[str] = None
-    reserved_at: Optional[str] = None
+    status: UnitStatus = "available"
+    # Sale details (set by Sales role)
+    owner_name: Optional[str] = None
+    owner_contact: Optional[str] = None
+    owner_email: Optional[str] = None
+    discount: float = 0
+    total_price: float = 0  # price after PLCs and discount
+    payment_plan_template_id: Optional[str] = None
+    sold_by: Optional[str] = None
     sold_at: Optional[str] = None
-    attributes: dict = Field(default_factory=dict)  # type-specific fields
+    # CRM scheduling
+    schedule_created_by: Optional[str] = None
+    schedule_created_at: Optional[str] = None
     created_at: str = Field(default_factory=now)
 
 
 class UnitCreate(BaseModel):
     project_id: str
-    unit_type_id: Optional[str] = None
-    unit_number: str
+    plot_number: str
+    size: str = ""
+    facing: str = ""
+    plcs: List[PLCEntry] = []
     price: float = 0
-    attributes: dict = Field(default_factory=dict)
 
 
-class MarkSold(BaseModel):
-    buyer_name: str
-    buyer_contact: Optional[str] = ""
-    total_price: Optional[float] = None
+class UnitUpdate(BaseModel):
+    plot_number: Optional[str] = None
+    size: Optional[str] = None
+    facing: Optional[str] = None
+    plcs: Optional[List[PLCEntry]] = None
+    price: Optional[float] = None
 
 
-class ReserveUnit(BaseModel):
-    buyer_name: str
-    buyer_contact: Optional[str] = ""
-    reserved_until: Optional[str] = None  # ISO date
-    total_price: Optional[float] = None
+class SellUnitRequest(BaseModel):
+    owner_name: str
+    owner_contact: str = ""
+    owner_email: Optional[str] = None
+    discount: float = 0
+    total_price: float
+    payment_plan_template_id: Optional[str] = None
 
 
-class BulkUnitCreate(BaseModel):
+class PlanStage(BaseModel):
+    name: str
+    percent: float
+    days_from_start: int = 0
+
+
+class PaymentPlanTemplate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    template_id: str = Field(default_factory=lambda: new_id("tpl"))
+    name: str
+    description: str = ""
+    stages: List[PlanStage]
+    created_by: Optional[str] = None
+    created_at: str = Field(default_factory=now)
+
+
+class PaymentPlanTemplateCreate(BaseModel):
+    name: str
+    description: str = ""
+    stages: List[PlanStage]
+
+
+InstallmentStatus = Literal["upcoming", "initiated", "reflected", "overdue"]
+
+
+class Installment(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    installment_id: str = Field(default_factory=lambda: new_id("inst"))
+    unit_id: str
     project_id: str
-    unit_type_id: Optional[str] = None
-    prefix: str = ""
-    start: int
-    end: int
-    pad: int = 0            # zero-padding for numbers, 0 = none
-    base_price: float = 0
+    stage_name: str
+    percent: float
+    amount: float
+    due_date: str  # ISO date
+    status: InstallmentStatus = "upcoming"
+    initiated_at: Optional[str] = None
+    initiated_by: Optional[str] = None
+    reflected_at: Optional[str] = None
+    reflected_by: Optional[str] = None
+    notes: str = ""
+
+
+class InstallmentCreate(BaseModel):
+    stage_name: str
+    percent: float
+    amount: float
+    due_date: str
+    notes: str = ""
+
+
+TicketStatus = Literal["open", "in_progress", "resolved", "closed"]
+TicketSeverity = Literal["low", "medium", "high", "critical"]
+
+
+class Ticket(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    ticket_id: str = Field(default_factory=lambda: new_id("tkt"))
+    project_id: str
+    stock_item_id: Optional[str] = None
+    subject: str
+    description: str = ""
+    severity: TicketSeverity = "medium"
+    status: TicketStatus = "open"
+    raised_by: str
+    resolved_by: Optional[str] = None
+    resolution_note: str = ""
+    resolved_at: Optional[str] = None
+    created_at: str = Field(default_factory=now)
+
+
+class TicketCreate(BaseModel):
+    project_id: str
+    stock_item_id: Optional[str] = None
+    subject: str
+    description: str = ""
+    severity: TicketSeverity = "medium"
+
+
+class TicketResolve(BaseModel):
+    status: TicketStatus = "resolved"
+    resolution_note: str = ""
 
 
 class Payment(BaseModel):
@@ -565,85 +649,38 @@ def require_roles(*roles: Role):
 
 def user_scope_projects(user: User) -> Optional[List[str]]:
     """Return None (all projects) or list of project_ids the user can see."""
-    if user.role in ("admin", "accounts", "management"):
+    if user.role in ("admin", "accounts", "management", "sales", "crm"):
         return None
     return user.project_ids or []
+
+
+def is_setup_role(user: User) -> bool:
+    """Users who can create/edit projects, units, and templates."""
+    return user.role in ("admin", "management")
 
 
 # --------------------------------------- project-type inventory schemas ----
 TYPE_SCHEMAS: dict[str, dict[str, Any]] = {
     "residential": {
-        "label": "Residential Apartments",
-        "description": "Multi-story residential — 1/2/3/4 BHK, penthouses, studios.",
-        "unit_types": ["Studio", "1BHK", "2BHK", "3BHK", "3.5BHK", "4BHK", "Penthouse"],
+        "label": "Residential",
+        "description": "Apartments, blocks, towers.",
         "fields": [
-            {"key": "tower", "label": "Tower / Wing", "type": "text"},
-            {"key": "floor", "label": "Floor", "type": "number"},
-            {"key": "bhk", "label": "Configuration (BHK)", "type": "text"},
-            {"key": "carpet_area_sqft", "label": "Carpet area (sqft)", "type": "number"},
-            {"key": "super_area_sqft", "label": "Super built-up area (sqft)", "type": "number"},
+            {"key": "plot_number", "label": "Plot / Unit number", "type": "text"},
+            {"key": "size", "label": "Size", "type": "text"},
             {"key": "facing", "label": "Facing", "type": "select",
              "options": ["North","East","South","West","North-East","North-West","South-East","South-West"]},
-            {"key": "balconies", "label": "Balconies", "type": "number"},
-            {"key": "bathrooms", "label": "Bathrooms", "type": "number"},
-            {"key": "parking_slots", "label": "Parking slots", "type": "number"},
+            {"key": "price", "label": "Base price", "type": "number"},
         ],
     },
-    "commercial": {
-        "label": "Commercial",
-        "description": "Offices, retail, showrooms, co-working, warehouses.",
-        "unit_types": ["Office", "Retail Shop", "Showroom", "Warehouse", "Co-working"],
-        "fields": [
-            {"key": "use_type", "label": "Use type", "type": "select",
-             "options": ["Office","Retail","Showroom","Warehouse","Co-working"]},
-            {"key": "floor", "label": "Floor", "type": "number"},
-            {"key": "carpet_area_sqft", "label": "Carpet area (sqft)", "type": "number"},
-            {"key": "chargeable_area_sqft", "label": "Chargeable area (sqft)", "type": "number"},
-            {"key": "frontage_ft", "label": "Frontage (ft)", "type": "number"},
-            {"key": "washrooms", "label": "Washrooms", "type": "number"},
-            {"key": "parking_slots", "label": "Parking slots", "type": "number"},
-        ],
-    },
-    "plot": {
+    "plots_land": {
         "label": "Plots / Land",
         "description": "Freehold residential or commercial plots.",
-        "unit_types": ["Residential Plot", "Commercial Plot", "Corner Plot"],
         "fields": [
-            {"key": "area_sqft", "label": "Area (sqft)", "type": "number"},
-            {"key": "length_ft", "label": "Length (ft)", "type": "number"},
-            {"key": "width_ft", "label": "Width (ft)", "type": "number"},
+            {"key": "plot_number", "label": "Plot number", "type": "text"},
+            {"key": "size", "label": "Size / Dimensions", "type": "text"},
             {"key": "facing", "label": "Facing", "type": "select",
              "options": ["North","East","South","West","North-East","North-West","South-East","South-West"]},
-            {"key": "corner", "label": "Corner plot", "type": "boolean"},
-            {"key": "road_width_ft", "label": "Road width (ft)", "type": "number"},
-        ],
-    },
-    "villa": {
-        "label": "Villas",
-        "description": "Standalone or gated-community villas.",
-        "unit_types": ["3BHK Villa", "4BHK Villa", "5BHK Villa", "Twin Villa"],
-        "fields": [
-            {"key": "plot_area_sqft", "label": "Plot area (sqft)", "type": "number"},
-            {"key": "builtup_area_sqft", "label": "Built-up area (sqft)", "type": "number"},
-            {"key": "bedrooms", "label": "Bedrooms", "type": "number"},
-            {"key": "bathrooms", "label": "Bathrooms", "type": "number"},
-            {"key": "floors", "label": "Floors", "type": "number"},
-            {"key": "facing", "label": "Facing", "type": "select",
-             "options": ["North","East","South","West","North-East","North-West","South-East","South-West"]},
-            {"key": "garden", "label": "Private garden", "type": "boolean"},
-            {"key": "swimming_pool", "label": "Swimming pool", "type": "boolean"},
-        ],
-    },
-    "mixed": {
-        "label": "Mixed-use",
-        "description": "Multiple asset types under one project.",
-        "unit_types": ["Apartment", "Office", "Retail", "Villa", "Plot", "Other"],
-        "fields": [
-            {"key": "category", "label": "Category", "type": "select",
-             "options": ["Apartment","Office","Retail","Villa","Plot","Other"]},
-            {"key": "carpet_area_sqft", "label": "Carpet area (sqft)", "type": "number"},
-            {"key": "floor", "label": "Floor", "type": "text"},
-            {"key": "notes", "label": "Notes", "type": "text"},
+            {"key": "price", "label": "Base price", "type": "number"},
         ],
     },
 }
@@ -875,7 +912,7 @@ async def list_projects(user: User = Depends(get_current_user)):
 
 @api.post("/projects")
 async def create_project(payload: ProjectCreate,
-                         user: User = Depends(require_roles("admin"))):
+                         user: User = Depends(require_roles("admin", "management"))):
     p = Project(**payload.model_dump())
     await db.projects.insert_one(p.model_dump())
     await audit(user.user_id, "create_project", "project", p.project_id,
@@ -885,7 +922,7 @@ async def create_project(payload: ProjectCreate,
 
 @api.patch("/projects/{project_id}")
 async def update_project(project_id: str, payload: ProjectCreate,
-                         user: User = Depends(require_roles("admin"))):
+                         user: User = Depends(require_roles("admin", "management"))):
     upd = {k: v for k, v in payload.model_dump().items() if v is not None}
     r = await db.projects.update_one({"project_id": project_id}, {"$set": upd})
     if r.matched_count == 0:
@@ -902,7 +939,7 @@ async def project_types_schemas():
 
 @api.get("/projects/{project_id}/impact")
 async def project_impact(project_id: str,
-                         user: User = Depends(require_roles("admin"))):
+                         user: User = Depends(require_roles("admin", "management"))):
     users = await db.users.count_documents({"project_ids": project_id})
     units = await db.units.count_documents({"project_id": project_id})
     payments = await db.payments.count_documents({"project_id": project_id})
@@ -921,35 +958,14 @@ async def delete_project(project_id: str,
             400, f"Cannot delete: {n_users} user(s) still assigned")
     await db.projects.delete_one({"project_id": project_id})
     await db.units.delete_many({"project_id": project_id})
-    await db.unit_types.delete_many({"project_id": project_id})
     await db.payments.delete_many({"project_id": project_id})
     await db.expenses.delete_many({"project_id": project_id})
     await db.stock_items.delete_many({"project_id": project_id})
     await db.stock_movements.delete_many({"project_id": project_id})
+    await db.installments.delete_many({"project_id": project_id})
+    await db.tickets.delete_many({"project_id": project_id})
     await audit(user.user_id, "delete_project", "project", project_id, {})
     return {"ok": True}
-
-
-# ------------------------------------------------------ unit types ---------
-@api.get("/unit-types")
-async def list_unit_types(project_id: Optional[str] = None,
-                          user: User = Depends(get_current_user)):
-    q: dict = {}
-    if project_id:
-        q["project_id"] = project_id
-    scope = user_scope_projects(user)
-    if scope is not None:
-        q["project_id"] = {"$in": scope} if not project_id else project_id
-    docs = await db.unit_types.find(q, {"_id": 0}).to_list(1000)
-    return docs
-
-
-@api.post("/unit-types")
-async def create_unit_type(payload: UnitTypeCreate,
-                           user: User = Depends(require_roles("admin"))):
-    ut = UnitType(**payload.model_dump())
-    await db.unit_types.insert_one(ut.model_dump())
-    return ut.model_dump()
 
 
 # ------------------------------------------------------ units --------------
@@ -971,104 +987,258 @@ async def list_units(project_id: Optional[str] = None,
 
 @api.post("/units")
 async def create_unit(payload: UnitCreate,
-                      user: User = Depends(require_roles("admin"))):
+                      user: User = Depends(require_roles("admin", "management"))):
     u = Unit(**payload.model_dump())
     await db.units.insert_one(u.model_dump())
+    await audit(user.user_id, "create_unit", "unit", u.unit_id,
+                {"plot_number": u.plot_number})
     return u.model_dump()
 
 
-@api.post("/units/bulk")
-async def bulk_create_units(payload: BulkUnitCreate,
-                            user: User = Depends(require_roles("admin"))):
-    if payload.end < payload.start:
-        raise HTTPException(400, "end must be >= start")
-    if payload.end - payload.start + 1 > 500:
-        raise HTTPException(400, "Bulk limit is 500 units per call")
-    existing = await db.units.find(
-        {"project_id": payload.project_id}, {"_id": 0, "unit_number": 1}
-    ).to_list(5000)
-    existing_nums = {u["unit_number"] for u in existing}
-
-    created: list[dict] = []
-    skipped: list[str] = []
-    for n in range(payload.start, payload.end + 1):
-        num = f"{payload.prefix}{str(n).zfill(payload.pad) if payload.pad else n}"
-        if num in existing_nums:
-            skipped.append(num)
-            continue
-        u = Unit(project_id=payload.project_id,
-                 unit_type_id=payload.unit_type_id,
-                 unit_number=num, price=payload.base_price)
-        await db.units.insert_one(u.model_dump())
-        created.append(u.model_dump())
-    await audit(user.user_id, "bulk_units", "unit", payload.project_id,
-                {"created": len(created), "skipped": len(skipped)})
-    return {"created": len(created), "skipped": skipped,
-            "units": created}
+@api.patch("/units/{unit_id}")
+async def update_unit(unit_id: str, payload: UnitUpdate,
+                      user: User = Depends(require_roles("admin", "management"))):
+    upd = {k: v for k, v in payload.model_dump(exclude_none=True).items()}
+    if not upd:
+        raise HTTPException(400, "Nothing to update")
+    r = await db.units.update_one({"unit_id": unit_id}, {"$set": upd})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Unit not found")
+    await audit(user.user_id, "update_unit", "unit", unit_id, upd)
+    return await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
 
 
 @api.post("/units/{unit_id}/sell")
-async def mark_sold(unit_id: str, payload: MarkSold,
-                    user: User = Depends(require_roles("admin"))):
+async def mark_sold(unit_id: str, payload: SellUnitRequest,
+                    user: User = Depends(require_roles("admin", "sales", "management"))):
     unit = await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
     if not unit:
         raise HTTPException(404, "Unit not found")
-    if unit["status"] == "sold":
-        raise HTTPException(400, "Unit already sold")
-    upd = {"status": "sold", "buyer_name": payload.buyer_name,
-           "buyer_contact": payload.buyer_contact or "", "sold_at": now(),
-           "reserved_until": None, "reserved_at": None}
-    if payload.total_price is not None:
-        upd["price"] = payload.total_price
+    if unit["status"] in ("sold", "crm_pending", "crm_scheduled",
+                          "accounts_tracking"):
+        raise HTTPException(400, "Unit is already in the sale pipeline")
+    upd = {
+        "status": "crm_pending",
+        "owner_name": payload.owner_name,
+        "owner_contact": payload.owner_contact,
+        "owner_email": payload.owner_email,
+        "discount": payload.discount,
+        "total_price": payload.total_price,
+        "payment_plan_template_id": payload.payment_plan_template_id,
+        "sold_by": user.user_id,
+        "sold_at": now(),
+    }
     await db.units.update_one({"unit_id": unit_id}, {"$set": upd})
     await audit(user.user_id, "sell_unit", "unit", unit_id, upd)
+    # Notify Admin, Accounts, CRM
+    proj = await db.projects.find_one({"project_id": unit["project_id"]},
+                                      {"_id": 0}) or {}
+    msg = (f"Unit {unit.get('plot_number', unit_id)} in "
+           f"{proj.get('name', 'project')} sold to {payload.owner_name}")
+    async for u in db.users.find(
+            {"role": {"$in": ["admin", "accounts", "crm"]}, "is_active": True},
+            {"_id": 0}):
+        await notify(u["user_id"], "unit_sold", msg,
+                     link=f"/crm/{unit_id}")
+        send_email(u["email"], "Unit sold — CRM handoff required",
+                   f"<p>{msg}</p><p>Total price: "
+                   f"₹{payload.total_price:,.0f}</p>")
     return await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
 
 
-@api.post("/units/{unit_id}/reserve")
-async def reserve_unit(unit_id: str, payload: ReserveUnit,
-                       user: User = Depends(require_roles("admin"))):
-    unit = await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
-    if not unit:
-        raise HTTPException(404, "Unit not found")
-    if unit["status"] not in ("available", "reserved"):
-        raise HTTPException(400, "Unit must be available to reserve")
-    upd = {"status": "reserved", "buyer_name": payload.buyer_name,
-           "buyer_contact": payload.buyer_contact or "",
-           "reserved_until": payload.reserved_until,
-           "reserved_at": now()}
-    if payload.total_price is not None:
-        upd["price"] = payload.total_price
-    await db.units.update_one({"unit_id": unit_id}, {"$set": upd})
-    await audit(user.user_id, "reserve_unit", "unit", unit_id, upd)
-    return await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
-
-
-@api.post("/units/{unit_id}/release")
-async def release_unit(unit_id: str,
-                       user: User = Depends(require_roles("admin"))):
-    unit = await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
-    if not unit:
-        raise HTTPException(404, "Unit not found")
-    if unit["status"] != "reserved":
-        raise HTTPException(400, "Only reserved units can be released")
-    upd = {"status": "available", "buyer_name": None, "buyer_contact": None,
-           "reserved_until": None, "reserved_at": None}
-    await db.units.update_one({"unit_id": unit_id}, {"$set": upd})
-    await audit(user.user_id, "release_unit", "unit", unit_id, {})
-    return await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
-
-
-@api.post("/units/{unit_id}/cancel")
+@api.post("/units/{unit_id}/cancel-sale")
 async def cancel_sale(unit_id: str,
-                      user: User = Depends(require_roles("admin"))):
+                      user: User = Depends(require_roles("admin", "management"))):
     unit = await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
     if not unit:
         raise HTTPException(404, "Unit not found")
-    await db.units.update_one({"unit_id": unit_id},
-                              {"$set": {"status": "cancelled"}})
+    await db.units.update_one(
+        {"unit_id": unit_id},
+        {"$set": {"status": "available", "owner_name": None,
+                  "owner_contact": None, "owner_email": None,
+                  "discount": 0, "total_price": 0,
+                  "payment_plan_template_id": None,
+                  "sold_by": None, "sold_at": None}})
+    await db.installments.delete_many({"unit_id": unit_id})
     await audit(user.user_id, "cancel_sale", "unit", unit_id, {})
     return {"ok": True}
+
+
+# ------------------------------------- payment plan templates -------------
+@api.get("/payment-templates")
+async def list_templates(user: User = Depends(get_current_user)):
+    return await db.payment_templates.find({}, {"_id": 0}).sort(
+        "created_at", -1).to_list(200)
+
+
+@api.post("/payment-templates")
+async def create_template(payload: PaymentPlanTemplateCreate,
+                          user: User = Depends(require_roles("admin", "management"))):
+    total = sum(s.percent for s in payload.stages)
+    if abs(total - 100) > 0.01:
+        raise HTTPException(400, f"Stages must sum to 100% (got {total})")
+    t = PaymentPlanTemplate(**payload.model_dump(), created_by=user.user_id)
+    await db.payment_templates.insert_one(t.model_dump())
+    await audit(user.user_id, "create_template", "payment_template",
+                t.template_id, {"name": t.name})
+    return t.model_dump()
+
+
+@api.delete("/payment-templates/{template_id}")
+async def delete_template(template_id: str,
+                          user: User = Depends(require_roles("admin", "management"))):
+    r = await db.payment_templates.delete_one({"template_id": template_id})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Template not found")
+    await audit(user.user_id, "delete_template", "payment_template",
+                template_id, {})
+    return {"ok": True}
+
+
+# ---------------------------------------- installments (CRM schedule) ----
+@api.get("/units/{unit_id}/installments")
+async def list_installments(unit_id: str,
+                            user: User = Depends(get_current_user)):
+    return await db.installments.find(
+        {"unit_id": unit_id}, {"_id": 0}).sort("due_date", 1).to_list(200)
+
+
+@api.post("/units/{unit_id}/installments")
+async def create_installments(unit_id: str, payload: List[InstallmentCreate],
+                              user: User = Depends(require_roles("admin", "crm", "management"))):
+    unit = await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
+    if not unit:
+        raise HTTPException(404, "Unit not found")
+    # Replace existing installments
+    await db.installments.delete_many({"unit_id": unit_id})
+    docs = []
+    for p in payload:
+        inst = Installment(unit_id=unit_id, project_id=unit["project_id"],
+                           stage_name=p.stage_name, percent=p.percent,
+                           amount=p.amount, due_date=p.due_date,
+                           notes=p.notes)
+        docs.append(inst.model_dump())
+    if docs:
+        await db.installments.insert_many(docs)
+    new_status = "crm_scheduled" if docs else "crm_pending"
+    await db.units.update_one(
+        {"unit_id": unit_id},
+        {"$set": {"status": new_status,
+                  "schedule_created_by": user.user_id,
+                  "schedule_created_at": now()}})
+    await audit(user.user_id, "create_schedule", "unit", unit_id,
+                {"count": len(docs)})
+    if docs:
+        # Notify Admin and Accounts that schedule is ready for tracking
+        proj = await db.projects.find_one({"project_id": unit["project_id"]},
+                                          {"_id": 0}) or {}
+        msg = (f"Payment schedule ready for "
+               f"{unit.get('plot_number', unit_id)} in "
+               f"{proj.get('name', 'project')}")
+        async for u in db.users.find(
+                {"role": {"$in": ["admin", "accounts"]}, "is_active": True},
+                {"_id": 0}):
+            await notify(u["user_id"], "schedule_created", msg,
+                         link=f"/crm/{unit_id}")
+    return {"created": len(docs)}
+
+
+@api.post("/installments/{installment_id}/initiate")
+async def initiate_installment(installment_id: str,
+                               user: User = Depends(require_roles("admin", "crm"))):
+    r = await db.installments.update_one(
+        {"installment_id": installment_id, "status": {"$in": ["upcoming", "overdue"]}},
+        {"$set": {"status": "initiated", "initiated_at": now(),
+                  "initiated_by": user.user_id}})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Installment not found or not actionable")
+    inst = await db.installments.find_one(
+        {"installment_id": installment_id}, {"_id": 0})
+    unit = await db.units.find_one({"unit_id": inst["unit_id"]}, {"_id": 0})
+    if unit["status"] != "accounts_tracking":
+        await db.units.update_one({"unit_id": unit["unit_id"]},
+                                  {"$set": {"status": "accounts_tracking"}})
+    # notify accounts
+    async for u in db.users.find(
+            {"role": {"$in": ["admin", "accounts"]}, "is_active": True},
+            {"_id": 0}):
+        await notify(u["user_id"], "payment_initiated",
+                     f"₹{inst['amount']:,.0f} initiated for "
+                     f"{unit.get('plot_number','')}",
+                     link=f"/crm/{unit['unit_id']}")
+    await audit(user.user_id, "initiate_installment", "installment",
+                installment_id, {})
+    return inst
+
+
+@api.post("/installments/{installment_id}/reflect")
+async def reflect_installment(installment_id: str,
+                              user: User = Depends(require_roles("admin", "accounts"))):
+    r = await db.installments.update_one(
+        {"installment_id": installment_id, "status": "initiated"},
+        {"$set": {"status": "reflected", "reflected_at": now(),
+                  "reflected_by": user.user_id}})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Installment not initiated yet")
+    inst = await db.installments.find_one(
+        {"installment_id": installment_id}, {"_id": 0})
+    # Also record as a payment for revenue continuity
+    unit = await db.units.find_one({"unit_id": inst["unit_id"]}, {"_id": 0})
+    p = Payment(project_id=unit["project_id"], unit_id=inst["unit_id"],
+                amount=inst["amount"], mode="bank_transfer",
+                reference=f"Installment {inst['stage_name']}",
+                paid_on=now()[:10], recorded_by=user.user_id)
+    await db.payments.insert_one(p.model_dump())
+    await audit(user.user_id, "reflect_installment", "installment",
+                installment_id, {})
+    return inst
+
+
+# ---------------------------------------------------------- tickets -------
+@api.get("/tickets")
+async def list_tickets(project_id: Optional[str] = None,
+                       user: User = Depends(get_current_user)):
+    q: dict = {}
+    if project_id:
+        q["project_id"] = project_id
+    scope = user_scope_projects(user)
+    if scope is not None:
+        q["project_id"] = q.get("project_id") or {"$in": scope}
+    return await db.tickets.find(q, {"_id": 0}).sort(
+        "created_at", -1).to_list(500)
+
+
+@api.post("/tickets")
+async def create_ticket(payload: TicketCreate,
+                        user: User = Depends(require_roles("site_manager", "admin", "management"))):
+    if user.role == "site_manager" and payload.project_id not in user.project_ids:
+        raise HTTPException(403, "Project not in your scope")
+    t = Ticket(**payload.model_dump(), raised_by=user.user_id)
+    await db.tickets.insert_one(t.model_dump())
+    await audit(user.user_id, "create_ticket", "ticket", t.ticket_id,
+                {"subject": t.subject})
+    # notify admin + management
+    async for u in db.users.find(
+            {"role": {"$in": ["admin", "management"]}, "is_active": True},
+            {"_id": 0}):
+        await notify(u["user_id"], "ticket_new",
+                     f"{t.severity.upper()} · {t.subject}",
+                     link=f"/tickets/{t.ticket_id}")
+    return t.model_dump()
+
+
+@api.patch("/tickets/{ticket_id}")
+async def resolve_ticket(ticket_id: str, payload: TicketResolve,
+                         user: User = Depends(require_roles("admin", "management"))):
+    upd = {"status": payload.status, "resolution_note": payload.resolution_note}
+    if payload.status in ("resolved", "closed"):
+        upd["resolved_by"] = user.user_id
+        upd["resolved_at"] = now()
+    r = await db.tickets.update_one({"ticket_id": ticket_id}, {"$set": upd})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Ticket not found")
+    await audit(user.user_id, "resolve_ticket", "ticket", ticket_id, upd)
+    return await db.tickets.find_one({"ticket_id": ticket_id}, {"_id": 0})
 
 
 # ------------------------------------------------------ payments -----------
@@ -1120,7 +1290,9 @@ async def revenue_summary(project_id: Optional[str] = None,
     pay_q: dict = {"unit_id": {"$in": unit_ids}}
     payments = await db.payments.find(pay_q, {"_id": 0}).to_list(10000)
 
-    accrued = sum(u["price"] for u in units if u["status"] == "sold")
+    SOLD_STATES = ("sold", "crm_pending", "crm_scheduled", "accounts_tracking")
+    accrued = sum(u.get("total_price", 0) or u.get("price", 0)
+                  for u in units if u["status"] in SOLD_STATES)
     received = sum(p["amount"] for p in payments)
     receivable = accrued - received
 
@@ -1128,10 +1300,11 @@ async def revenue_summary(project_id: Optional[str] = None,
     for u in units:
         by_unit[u["unit_id"]] = {
             "unit_id": u["unit_id"],
-            "unit_number": u["unit_number"],
+            "unit_number": u["plot_number"],
             "project_id": u["project_id"],
             "status": u["status"],
-            "accrued": u["price"] if u["status"] == "sold" else 0,
+            "accrued": (u.get("total_price", 0) or u.get("price", 0))
+            if u["status"] in SOLD_STATES else 0,
             "received": 0,
         }
     for p in payments:
@@ -1171,7 +1344,8 @@ async def _compute_period_actuals(scope_pids: Optional[list[str]],
         if k in key_set:
             out[k]["received"] += p["amount"]
 
-    unit_q: dict = {"status": "sold"}
+    unit_q: dict = {"status": {"$in": ["sold", "crm_pending",
+                                       "crm_scheduled", "accounts_tracking"]}}
     if scope_pids:
         unit_q["project_id"] = {"$in": scope_pids}
     async for u in db.units.find(unit_q, {"_id": 0}):
@@ -1179,7 +1353,7 @@ async def _compute_period_actuals(scope_pids: Optional[list[str]],
             continue
         k = period_key_of(u["sold_at"], period_type)
         if k in key_set:
-            out[k]["accrued"] += u.get("price", 0)
+            out[k]["accrued"] += u.get("total_price", 0) or u.get("price", 0)
     return out
 
 
@@ -1659,13 +1833,17 @@ async def dashboard_summary(project_id: Optional[str] = None,
         exp_q["project_id"] = {"$in": scope}
         stock_q["project_id"] = {"$in": scope}
 
+    SOLD_STATES = ["sold", "crm_pending", "crm_scheduled", "accounts_tracking"]
     total = await db.units.count_documents(unit_q)
-    sold = await db.units.count_documents({**unit_q, "status": "sold"})
-    available = await db.units.count_documents({**unit_q, "status": "available"})
-    reserved = await db.units.count_documents({**unit_q, "status": "reserved"})
+    sold = await db.units.count_documents(
+        {**unit_q, "status": {"$in": SOLD_STATES}})
+    available = await db.units.count_documents(
+        {**unit_q, "status": "available"})
+    reserved = 0  # legacy — reservation removed
 
     units = await db.units.find(unit_q, {"_id": 0}).to_list(5000)
-    accrued = sum(u["price"] for u in units if u["status"] == "sold")
+    accrued = sum(u.get("total_price", 0) or u.get("price", 0)
+                  for u in units if u["status"] in SOLD_STATES)
     unit_ids = [u["unit_id"] for u in units]
     payments = await db.payments.find(
         {"unit_id": {"$in": unit_ids}}, {"_id": 0}
@@ -1678,7 +1856,6 @@ async def dashboard_summary(project_id: Optional[str] = None,
     elif scope is not None:
         projects_q["project_id"] = {"$in": scope}
     projects = await db.projects.find(projects_q, {"_id": 0}).to_list(500)
-    target = sum(p.get("target_revenue", 0) for p in projects)
 
     pending = await db.expenses.count_documents({**exp_q, "status": "pending"})
     stage1 = await db.expenses.count_documents(
@@ -1688,8 +1865,11 @@ async def dashboard_summary(project_id: Optional[str] = None,
     rejected = await db.expenses.count_documents(
         {**exp_q, "status": "rejected"})
 
+    tickets_open = await db.tickets.count_documents(
+        {**({"project_id": exp_q["project_id"]} if exp_q else {}),
+         "status": {"$in": ["open", "in_progress"]}})
+
     approved_amt = 0.0
-    # single pass for both approved_amt, trend and vendor spend
     from collections import defaultdict
     by_day: dict[str, float] = defaultdict(float)
     vendor_now: dict[str, float] = defaultdict(float)
@@ -1713,7 +1893,6 @@ async def dashboard_summary(project_id: Optional[str] = None,
 
     trend = [{"date": d, "amount": v} for d, v in sorted(by_day.items())][-30:]
 
-    # top vendors this month vs last
     vendors: list[dict] = []
     for v, amt in sorted(vendor_now.items(), key=lambda x: -x[1])[:5]:
         prev = vendor_prev.get(v, 0.0)
@@ -1723,19 +1902,40 @@ async def dashboard_summary(project_id: Optional[str] = None,
             "delta_pct": delta_pct,
         })
 
+    # Per-project rollup
+    per_project = []
+    for p in projects:
+        pu = [u for u in units if u["project_id"] == p["project_id"]]
+        p_sold = sum(1 for u in pu if u["status"] in SOLD_STATES)
+        p_accr = sum(u.get("total_price", 0) or u.get("price", 0)
+                     for u in pu if u["status"] in SOLD_STATES)
+        p_recv = sum(p2["amount"] for p2 in payments
+                     if p2["project_id"] == p["project_id"])
+        per_project.append({
+            "project_id": p["project_id"],
+            "name": p["name"],
+            "project_type": p["project_type"],
+            "location": p.get("location", ""),
+            "units_total": len(pu),
+            "units_sold": p_sold,
+            "accrued": p_accr,
+            "received": p_recv,
+            "receivable": p_accr - p_recv,
+        })
+
     return {
         "units": {"total": total, "sold": sold, "available": available,
                   "reserved": reserved},
         "revenue": {"accrued": accrued, "received": received,
-                    "receivable": accrued - received, "target": target},
+                    "receivable": accrued - received},
         "expenses": {"pending": pending, "stage1": stage1,
                      "approved": approved, "rejected": rejected,
                      "approved_amount": approved_amt},
         "expense_trend": trend,
         "top_vendors": vendors,
-        "period_targets": await _current_period_targets(
-            [p["project_id"] for p in projects]),
+        "tickets_open": tickets_open,
         "projects_count": len(projects),
+        "per_project": per_project,
     }
 
 
@@ -1772,7 +1972,7 @@ async def global_search(q: str, user: User = Depends(get_current_user)):
         proj_q["project_id"] = {"$in": scope}
     projects = await db.projects.find(proj_q, {"_id": 0}).limit(10).to_list(10)
 
-    unit_q = {"unit_number": {"$regex": q, "$options": "i"}}
+    unit_q = {"plot_number": {"$regex": q, "$options": "i"}}
     if scope is not None:
         unit_q["project_id"] = {"$in": scope}
     units = await db.units.find(unit_q, {"_id": 0}).limit(10).to_list(10)
@@ -1787,15 +1987,14 @@ async def global_search(q: str, user: User = Depends(get_current_user)):
 
 # ------------------------------------------------------ excel -------------
 IMPORT_SHEETS = {
-    "projects": ["name", "location", "description", "target_revenue"],
-    "units": ["project_id", "unit_type", "unit_number", "price"],
+    "units": ["plot_number", "size", "facing", "price"],
     "stock_items": ["project_id", "name", "unit", "opening", "vendor"],
 }
 
 
 @api.get("/excel/template/{kind}")
 async def excel_template(kind: str,
-                         user: User = Depends(require_roles("admin"))):
+                         user: User = Depends(require_roles("admin", "management"))):
     if kind not in IMPORT_SHEETS:
         raise HTTPException(400, "Unknown template kind")
     wb = Workbook()
@@ -1814,7 +2013,7 @@ async def excel_template(kind: str,
 
 @api.post("/excel/import/{kind}")
 async def excel_import(kind: str, file: UploadFile = File(...),
-                       user: User = Depends(require_roles("admin"))):
+                       user: User = Depends(require_roles("admin", "management"))):
     if kind not in IMPORT_SHEETS:
         raise HTTPException(400, "Unknown import kind")
     wb = load_workbook(io.BytesIO(await file.read()))
@@ -1833,36 +2032,7 @@ async def excel_import(kind: str, file: UploadFile = File(...),
     for i, row in enumerate(rows[1:], start=2):
         try:
             data = dict(zip(expected, row))
-            if kind == "projects":
-                if not data.get("name"):
-                    raise ValueError("name required")
-                p = Project(
-                    name=str(data["name"]),
-                    location=str(data.get("location") or ""),
-                    description=str(data.get("description") or ""),
-                    target_revenue=float(data.get("target_revenue") or 0),
-                )
-                await db.projects.insert_one(p.model_dump())
-            elif kind == "units":
-                pid = str(data.get("project_id") or "")
-                if not pid or not await db.projects.find_one({"project_id": pid}):
-                    raise ValueError("invalid project_id")
-                utype_name = str(data.get("unit_type") or "").strip()
-                ut_id = None
-                if utype_name:
-                    ut = await db.unit_types.find_one(
-                        {"project_id": pid, "name": utype_name}, {"_id": 0})
-                    if not ut:
-                        ut_new = UnitType(project_id=pid, name=utype_name)
-                        await db.unit_types.insert_one(ut_new.model_dump())
-                        ut_id = ut_new.unit_type_id
-                    else:
-                        ut_id = ut["unit_type_id"]
-                u = Unit(project_id=pid, unit_type_id=ut_id,
-                         unit_number=str(data.get("unit_number") or ""),
-                         price=float(data.get("price") or 0))
-                await db.units.insert_one(u.model_dump())
-            elif kind == "stock_items":
+            if kind == "stock_items":
                 pid = str(data.get("project_id") or "")
                 if not pid or not await db.projects.find_one({"project_id": pid}):
                     raise ValueError("invalid project_id")
@@ -1913,14 +2083,12 @@ async def export_units(project_id: Optional[str] = None,
     units = await db.units.find(q, {"_id": 0}).to_list(5000)
     proj = {p["project_id"]: p["name"] for p in
             await db.projects.find({}, {"_id": 0}).to_list(1000)}
-    utypes = {u["unit_type_id"]: u["name"] for u in
-              await db.unit_types.find({}, {"_id": 0}).to_list(1000)}
-    headers = ["Unit #", "Project", "Type", "Price", "Status",
-               "Buyer", "Contact", "Reserved Until", "Sold At"]
-    rows = [[u["unit_number"], proj.get(u["project_id"], ""),
-             utypes.get(u.get("unit_type_id"), ""), u["price"], u["status"],
-             u.get("buyer_name") or "", u.get("buyer_contact") or "",
-             u.get("reserved_until") or "", u.get("sold_at") or ""]
+    headers = ["Plot #", "Project", "Size", "Facing", "Price",
+               "Status", "Owner", "Contact", "Sold At"]
+    rows = [[u["plot_number"], proj.get(u["project_id"], ""),
+             u.get("size", ""), u.get("facing", ""), u.get("price", 0),
+             u["status"], u.get("owner_name") or "",
+             u.get("owner_contact") or "", u.get("sold_at") or ""]
             for u in units]
     buf = _rows_to_xlsx("units", headers, rows)
     return StreamingResponse(
@@ -1968,7 +2136,7 @@ async def export_payments(project_id: Optional[str] = None,
     elif scope is not None:
         q["project_id"] = {"$in": scope}
     pays = await db.payments.find(q, {"_id": 0}).sort("paid_on", -1).to_list(5000)
-    units_map = {u["unit_id"]: u["unit_number"] for u in
+    units_map = {u["unit_id"]: u["plot_number"] for u in
                  await db.units.find({}, {"_id": 0}).to_list(5000)}
     proj = {p["project_id"]: p["name"] for p in
             await db.projects.find({}, {"_id": 0}).to_list(1000)}
@@ -2014,24 +2182,41 @@ async def onboarding_status(user: User = Depends(get_current_user)):
     proj_count = await db.projects.count_documents({})
     acc_count = await db.users.count_documents({"role": "accounts", "is_active": True})
     mgmt_count = await db.users.count_documents({"role": "management", "is_active": True})
+    sales_count = await db.users.count_documents({"role": "sales", "is_active": True})
+    crm_count = await db.users.count_documents({"role": "crm", "is_active": True})
     sm_count = await db.users.count_documents({"role": "site_manager", "is_active": True})
     units_count = await db.units.count_documents({})
-    steps = {
-        "has_projects": proj_count > 0,
-        "has_units": units_count > 0,
-        "has_accounts": acc_count > 0,
-        "has_management": mgmt_count > 0,
-        "has_site_manager": sm_count > 0,
-    }
-    system_ready = all([steps["has_projects"], steps["has_units"],
-                        steps["has_accounts"], steps["has_management"],
-                        steps["has_site_manager"]])
+    # Project has site_manager assigned
+    proj_with_sm = await db.projects.count_documents(
+        {"site_manager_id": {"$ne": None}})
+
+    steps = [
+        {"key": "password_reset", "label": "Change temporary password",
+         "done": not user.must_reset_password},
+        {"key": "add_management", "label": "Invite Management user",
+         "done": mgmt_count > 0},
+        {"key": "add_accounts", "label": "Invite Accounts user",
+         "done": acc_count > 0},
+        {"key": "add_sales", "label": "Invite Sales user",
+         "done": sales_count > 0},
+        {"key": "add_crm", "label": "Invite CRM user",
+         "done": crm_count > 0},
+        {"key": "add_project", "label": "Create your first project",
+         "done": proj_count > 0},
+        {"key": "assign_site_manager",
+         "label": "Assign a Site Manager to a project",
+         "done": proj_with_sm > 0 and sm_count > 0},
+    ]
+    done_count = sum(1 for s in steps if s["done"])
     return {
         "steps": steps,
-        "system_ready": system_ready,
+        "done_count": done_count,
+        "total_steps": len(steps),
+        "system_ready": done_count == len(steps),
         "onboarding_completed": user.onboarding_completed,
         "counts": {"projects": proj_count, "units": units_count,
                    "accounts": acc_count, "management": mgmt_count,
+                   "sales": sales_count, "crm": crm_count,
                    "site_manager": sm_count},
     }
 
@@ -2061,14 +2246,11 @@ async def set_dash_config(payload: DashboardConfig,
 @api.post("/units/bulk-import")
 async def units_bulk_import(project_id: str = Form(...),
                             file: UploadFile = File(...),
-                            user: User = Depends(require_roles("admin"))):
-    """Import units for a project via .xlsx or .csv. Columns per project type."""
+                            user: User = Depends(require_roles("admin", "management"))):
+    """Import units for a project via .xlsx or .csv."""
     proj = await db.projects.find_one({"project_id": project_id}, {"_id": 0})
     if not proj:
         raise HTTPException(404, "Project not found")
-    schema = TYPE_SCHEMAS.get(proj.get("project_type", "residential"))
-    field_keys = [f["key"] for f in schema["fields"]]
-    expected_cols = ["unit_number", "unit_type", "price"] + field_keys
 
     raw = await file.read()
     rows: list[list[Any]] = []
@@ -2086,17 +2268,11 @@ async def units_bulk_import(project_id: str = Form(...),
         raise HTTPException(400, "Empty file")
     header = [str(c).strip() if c is not None else "" for c in rows[0]]
     header_map = {h: i for i, h in enumerate(header)}
-    missing = [c for c in ["unit_number"] if c not in header_map]
-    if missing:
+    if "plot_number" not in header_map:
         raise HTTPException(
             400,
-            f"Missing required column(s): {missing}. "
-            f"Expected columns: {expected_cols}")
-
-    # cache unit types
-    existing_types = {ut["name"]: ut["unit_type_id"] for ut in
-                      await db.unit_types.find({"project_id": project_id},
-                                               {"_id": 0}).to_list(500)}
+            "Missing required column: plot_number. "
+            "Expected columns: plot_number, size, facing, price")
 
     inserted, errors = 0, []
     for i, row in enumerate(rows[1:], start=2):
@@ -2107,49 +2283,19 @@ async def units_bulk_import(project_id: str = Form(...),
                     return None
                 return row[idx]
 
-            unum = cell("unit_number")
-            if not unum:
-                raise ValueError("unit_number required")
-            unum = str(unum).strip()
-
+            plot = cell("plot_number")
+            if not plot:
+                raise ValueError("plot_number required")
             price = cell("price") or 0
             try:
                 price = float(price)
             except (TypeError, ValueError):
                 price = 0.0
-
-            utype_name = str(cell("unit_type") or "").strip()
-            utype_id = None
-            if utype_name:
-                if utype_name in existing_types:
-                    utype_id = existing_types[utype_name]
-                else:
-                    new_ut = UnitType(project_id=project_id, name=utype_name,
-                                      default_price=price)
-                    await db.unit_types.insert_one(new_ut.model_dump())
-                    existing_types[utype_name] = new_ut.unit_type_id
-                    utype_id = new_ut.unit_type_id
-
-            attrs: dict = {}
-            for fk in field_keys:
-                v = cell(fk)
-                if v is None or v == "":
-                    continue
-                # type coercion
-                f = next((x for x in schema["fields"] if x["key"] == fk), {})
-                if f.get("type") == "number":
-                    try:
-                        v = float(v)
-                    except (TypeError, ValueError):
-                        pass
-                elif f.get("type") == "boolean":
-                    v = str(v).strip().lower() in ("1","true","yes","y")
-                else:
-                    v = str(v).strip()
-                attrs[fk] = v
-
-            u = Unit(project_id=project_id, unit_type_id=utype_id,
-                     unit_number=unum, price=price, attributes=attrs)
+            u = Unit(project_id=project_id,
+                     plot_number=str(plot).strip(),
+                     size=str(cell("size") or "").strip(),
+                     facing=str(cell("facing") or "").strip(),
+                     price=price)
             await db.units.insert_one(u.model_dump())
             inserted += 1
         except Exception as e:
@@ -2161,30 +2307,20 @@ async def units_bulk_import(project_id: str = Form(...),
 
 
 @api.get("/units/bulk-template")
-async def units_bulk_template(project_type: ProjectType = "residential",
-                              user: User = Depends(require_roles("admin"))):
-    schema = TYPE_SCHEMAS[project_type]
-    headers = ["unit_number", "unit_type", "price"] + [f["key"] for f in schema["fields"]]
+async def units_bulk_template(
+        user: User = Depends(require_roles("admin", "management"))):
+    headers = ["plot_number", "size", "facing", "price"]
     wb = Workbook()
     ws = wb.active
-    ws.title = f"{project_type}_units"
+    ws.title = "units"
     ws.append(headers)
-    # sample row
-    sample_row = ["A-101", schema["unit_types"][0], 5000000]
-    for f in schema["fields"]:
-        if f["type"] == "number":
-            sample_row.append(0)
-        elif f["type"] == "boolean":
-            sample_row.append("No")
-        else:
-            sample_row.append(f.get("options", [""])[0] if f.get("options") else "")
-    ws.append(sample_row)
+    ws.append(["P-101", "1200 sqft", "North-East", 5000000])
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
     return StreamingResponse(
         buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="units_{project_type}_template.xlsx"'})
+        headers={"Content-Disposition": 'attachment; filename="units_template.xlsx"'})
 
 
 # ------------------------------------------------------ mount -------------
