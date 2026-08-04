@@ -113,6 +113,21 @@ Role = Literal["super_admin", "process_admin",
                "accounts_head", "accounts_rep",
                "crm_head", "post_sales_rep",
                "site_supervisor"]
+_ROLE_LITERALS = frozenset(Role.__args__)
+# Legacy role names from earlier iterations (pre-Wave 1) — auto-migrated at
+# read time so existing prod DBs keep working after the deploy.
+_LEGACY_ROLE_MAP = {
+    "admin": "super_admin",
+    "administrator": "super_admin",
+    "management": "process_admin",
+    "manager": "process_admin",
+    "sales": "sales_rep",
+    "accounts": "accounts_rep",
+    "post_sales": "post_sales_rep",
+    "crm": "crm_head",
+    "supervisor": "site_supervisor",
+    "site": "site_supervisor",
+}
 ROLE_ORDER = ["super_admin", "process_admin",
               "crm_head", "sales_head", "accounts_head",
               "sales_rep", "post_sales_rep", "accounts_rep",
@@ -790,7 +805,29 @@ async def get_current_user(
     user_doc = await db.users.find_one({"user_id": payload["sub"]}, {"_id": 0})
     if not user_doc or not user_doc.get("is_active", True):
         raise HTTPException(401, "User not found or inactive")
-    return User(**user_doc)
+    # Backfill legacy role values from earlier iterations so users whose docs
+    # were seeded before Wave 1 (v3 role literal) continue to authenticate.
+    raw_role = user_doc.get("role")
+    if raw_role not in _ROLE_LITERALS:
+        migrated = _LEGACY_ROLE_MAP.get(raw_role)
+        if migrated:
+            user_doc["role"] = migrated
+            await db.users.update_one(
+                {"user_id": user_doc["user_id"]},
+                {"$set": {"role": migrated,
+                          "legacy_role_before_migration": raw_role}})
+            log.info("Migrated legacy role %s -> %s for user %s",
+                     raw_role, migrated, user_doc.get("email"))
+        else:
+            log.warning("User %s has unknown role %r — defaulting to site_supervisor",
+                        user_doc.get("email"), raw_role)
+            user_doc["role"] = "site_supervisor"
+    try:
+        return User(**user_doc)
+    except Exception as e:
+        log.exception("User payload failed validation for %s: %s",
+                       user_doc.get("email"), e)
+        raise HTTPException(500, "User profile is corrupted — contact support")
 
 
 def require_roles(*roles: Role):

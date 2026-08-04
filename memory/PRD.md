@@ -30,6 +30,12 @@ Core rule: Process Admin prepares, Super Admin approves. No one approves their o
 - Sidebar entries: **Cancellations**, **Material Requests**
 - `WEBHOOK_CRON_SECRET` in `backend/.env`
 
+## Hotfix — Legacy role auto-migration (Feb 2026, post-Wave 2 prod deploy)
+- Bug: production users seeded before Wave 1 have legacy `role` values (`admin`, `management`, etc.). Post Wave 1/2 the `Role` Literal became strict → `get_current_user` raised Pydantic `ValidationError` → 500 on every authenticated endpoint (including `/auth/change-password`).
+- Fix in `get_current_user`: if `role` is not in the current Literal, transparently map via `_LEGACY_ROLE_MAP` (admin→super_admin, management→process_admin, sales→sales_rep, accounts→accounts_rep, post_sales→post_sales_rep, crm→crm_head, supervisor→site_supervisor), persist the new role, and record the old value under `legacy_role_before_migration`.
+- Unknown roles fall back to `site_supervisor` with a warning log.
+- **Redeploy required** to publish this hotfix to prod.
+
 ## Backlog (Waves 3–4)
 ### P1
 - Customer document vault (KYC, agreements, receipts)
