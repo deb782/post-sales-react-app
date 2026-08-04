@@ -77,7 +77,7 @@ export default function Stock() {
               <DropdownMenuItem onClick={() => downloadPdf("Stock Book", ["Item","Project","Unit","Opening","Inward","Outward","Closing","Vendor"], items.map(it => [it.name, projMap[it.project_id] || "", it.unit, it.opening, it.inward, it.outward, it.closing, it.vendor || ""]), "stock.pdf")}><FileText className="w-4 h-4 mr-2" /> PDF</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          {can(user, "admin", "site_manager") && (
+          {can(user, "super_admin", "process_admin", "site_supervisor") && (
             <Dialog open={open} onOpenChange={setOpen}>
               <DialogTrigger asChild>
                 <Button data-testid="new-stock-item-btn" className="bg-emerald-900 hover:bg-emerald-800"><Plus className="w-4 h-4 mr-1" /> Add Item</Button>
@@ -128,7 +128,7 @@ export default function Stock() {
                 <TableCell className="text-right font-semibold">{it.closing}</TableCell>
                 <TableCell className="text-stone-600">{it.vendor || "—"}</TableCell>
                 <TableCell className="text-right space-x-1">
-                  {can(user, "admin", "site_manager") && (
+                  {can(user, "super_admin", "process_admin", "site_supervisor") && (
                     <>
                       <Button size="sm" variant="outline" onClick={() => { setMove(it); setMoveForm({ kind: "inward", quantity: 0, note: "" }); }} className="text-emerald-800" data-testid={`inward-${it.item_id}`}><ArrowDown className="w-3 h-3 mr-1" />Inward</Button>
                       <Button size="sm" variant="outline" onClick={() => { setMove(it); setMoveForm({ kind: "outward", quantity: 0, note: "" }); }} className="text-rose-700"><ArrowUp className="w-3 h-3 mr-1" />Outward</Button>

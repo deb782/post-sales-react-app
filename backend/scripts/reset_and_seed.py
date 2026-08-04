@@ -127,7 +127,7 @@ async def main() -> str:
         "name": ADMIN_NAME,
         "phone": None,
         "picture": None,
-        "role": "admin",
+        "role": "super_admin",
         "project_ids": [],
         "password_hash": password_hash,
         "must_reset_password": True,

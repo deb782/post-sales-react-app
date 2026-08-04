@@ -44,17 +44,31 @@ export function AuthProvider({ children }) {
 export const useAuth = () => useContext(AuthCtx);
 
 export const ROLE_LABELS = {
-  admin: "Admin",
-  management: "Management",
-  accounts: "Accounts",
-  sales: "Sales",
-  crm: "CRM",
-  site_manager: "Site Manager",
+  super_admin: "Super Admin",
+  process_admin: "Process Admin",
+  crm_head: "CRM Head",
+  sales_head: "Sales Head",
+  accounts_head: "Accounts Head",
+  sales_rep: "Sales Representative",
+  post_sales_rep: "Post-Sales Representative",
+  accounts_rep: "Accounts Representative",
+  site_supervisor: "Site Supervisor",
 };
 
-export const ROLE_ORDER = ["admin", "management", "accounts", "sales", "crm", "site_manager"];
+export const ROLE_ORDER = [
+  "super_admin", "process_admin",
+  "crm_head", "sales_head", "accounts_head",
+  "sales_rep", "post_sales_rep", "accounts_rep",
+  "site_supervisor",
+];
+
+export const ADMIN_TIER = ["super_admin", "process_admin"];
+export const HEADS = ["super_admin", "process_admin", "crm_head", "sales_head", "accounts_head"];
 
 export const can = (user, ...roles) => user && roles.includes(user.role);
 
-/** Users allowed to run the full setup flow. */
-export const canSetup = (user) => can(user, "admin", "management");
+/** Users allowed to run setup (subject to Super Admin approval). */
+export const canSetup = (user) => can(user, "super_admin", "process_admin");
+
+/** Only Super Admin can give final approvals. */
+export const canApproveFinal = (user) => can(user, "super_admin");

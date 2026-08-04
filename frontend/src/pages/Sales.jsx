@@ -67,7 +67,7 @@ export default function Sales() {
     } catch (e) { toast.error(apiError(e)); }
   };
 
-  const sold = units.filter(u => ["sold", "crm_pending", "crm_scheduled", "accounts_tracking"].includes(u.status));
+  const sold = units.filter(u => ["booked_pending_sales_approval","sale_confirmed","post_sales_active","fully_paid","registration_pending","registered","possession_pending","possession_completed"].includes(u.status));
 
   return (
     <div className="space-y-6" data-testid="sales-root">

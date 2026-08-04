@@ -17,9 +17,11 @@ import {
 import { Plus, UserCog, MoreHorizontal, KeyRound, Pencil, Trash2, Copy, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 
-const ALL_ROLES = ["admin", "management", "accounts", "sales", "crm", "site_manager"];
+const ALL_ROLES = ["super_admin", "process_admin", "crm_head", "sales_head",
+                   "accounts_head", "sales_rep", "post_sales_rep",
+                   "accounts_rep", "site_supervisor"];
 
-const BLANK = { email: "", name: "", role: "site_manager", phone: "", project_ids: [] };
+const BLANK = { email: "", name: "", role: "site_supervisor", phone: "", project_ids: [] };
 
 export default function Users() {
   const { user: me } = useAuth();
@@ -34,12 +36,12 @@ export default function Users() {
   const [confirmDel, setConfirmDel] = useState(null);
   const [showInactive, setShowInactive] = useState(false);
 
-  const isAdmin = me.role === "admin";
-  const isMgmt = me.role === "management";
+  const isAdmin = me.role === "super_admin";
+  const isMgmt = me.role === "process_admin";
 
-  // Management can't touch admins nor promote to admin.
-  const canManageThis = (u) => isAdmin || (isMgmt && u.role !== "admin");
-  const availableRoles = isAdmin ? ALL_ROLES : ALL_ROLES.filter(r => r !== "admin");
+  // Process Admin can't touch Super Admins nor promote to Super Admin.
+  const canManageThis = (u) => isAdmin || (isMgmt && u.role !== "super_admin");
+  const availableRoles = isAdmin ? ALL_ROLES : ALL_ROLES.filter(r => r !== "super_admin");
 
   const load = async () => {
     const [u, p] = await Promise.all([api.get("/users"), api.get("/projects")]);
@@ -72,7 +74,7 @@ export default function Users() {
         name: editForm.name,
         phone: editForm.phone,
         role: editForm.role,
-        project_ids: editForm.role === "site_manager" ? editForm.project_ids : [],
+        project_ids: editForm.role === "site_supervisor" ? editForm.project_ids : [],
       });
       toast.success("User updated");
       setEditing(null);
@@ -132,7 +134,7 @@ export default function Users() {
                     <SelectContent>{availableRoles.map(r => <SelectItem key={r} value={r}>{ROLE_LABELS[r]}</SelectItem>)}</SelectContent>
                   </Select>
                 </Field>
-                {invite.role === "site_manager" && (
+                {invite.role === "site_supervisor" && (
                   <div className="space-y-2 border border-stone-200 rounded-md p-3 max-h-48 overflow-y-auto">
                     <div className="text-xs uppercase tracking-widest text-stone-500">Project access</div>
                     {projects.map(p => (
@@ -184,7 +186,7 @@ export default function Users() {
                 </TableCell>
                 <TableCell><span className="text-xs px-2 py-1 rounded-full bg-stone-100 text-stone-700 font-medium">{ROLE_LABELS[u.role]}</span></TableCell>
                 <TableCell>
-                  {u.role === "site_manager" ? (
+                  {u.role === "site_supervisor" ? (
                     <div className="flex flex-wrap gap-1 max-w-xs">
                       {(u.project_ids || []).length === 0 && <span className="text-xs text-stone-400">None</span>}
                       {(u.project_ids || []).map(pid => {
@@ -249,7 +251,7 @@ export default function Users() {
                 <SelectContent>{availableRoles.map(r => <SelectItem key={r} value={r}>{ROLE_LABELS[r]}</SelectItem>)}</SelectContent>
               </Select>
             </Field>
-            {editForm.role === "site_manager" && (
+            {editForm.role === "site_supervisor" && (
               <div className="space-y-2 border border-stone-200 rounded-md p-3 max-h-48 overflow-y-auto">
                 <div className="text-xs uppercase tracking-widest text-stone-500">Project access</div>
                 {projects.map(p => (

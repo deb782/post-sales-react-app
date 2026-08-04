@@ -37,8 +37,8 @@ function Protected({ children, roles }) {
 
 function OnboardGate({ children }) {
   const { user } = useAuth();
-  // Only admin passes through the onboarding wizard once
-  if (user.role === "admin" && !user.onboarding_completed) {
+  // Only super_admin passes through the onboarding wizard once
+  if (user.role === "super_admin" && !user.onboarding_completed) {
     return <Navigate to="/onboarding" replace />;
   }
   return children;
@@ -50,24 +50,24 @@ function AppRouter() {
       <Route path="/login" element={<Login />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<Protected><ResetPassword /></Protected>} />
-      <Route path="/onboarding" element={<Protected roles={["admin"]}><Onboarding /></Protected>} />
+      <Route path="/onboarding" element={<Protected roles={["super_admin"]}><Onboarding /></Protected>} />
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route element={<Protected><OnboardGate><Layout /></OnboardGate></Protected>}>
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/projects" element={<Projects />} />
         <Route path="/units" element={<Units />} />
-        <Route path="/sales" element={<Protected roles={["admin","management","sales"]}><Sales /></Protected>} />
-        <Route path="/crm" element={<Protected roles={["admin","management","crm","accounts"]}><CRM /></Protected>} />
-        <Route path="/crm/:unitId" element={<Protected roles={["admin","management","crm","accounts"]}><CRM /></Protected>} />
-        <Route path="/revenue" element={<Protected roles={["admin","accounts","management"]}><Revenue /></Protected>} />
+        <Route path="/sales" element={<Protected roles={["super_admin","process_admin","sales_head","sales_rep"]}><Sales /></Protected>} />
+        <Route path="/crm" element={<Protected roles={["super_admin","process_admin","crm_head","post_sales_rep","accounts_head","accounts_rep"]}><CRM /></Protected>} />
+        <Route path="/crm/:unitId" element={<Protected roles={["super_admin","process_admin","crm_head","post_sales_rep","accounts_head","accounts_rep"]}><CRM /></Protected>} />
+        <Route path="/revenue" element={<Protected roles={["super_admin","process_admin","accounts_head","accounts_rep","crm_head"]}><Revenue /></Protected>} />
         <Route path="/expenses" element={<Expenses />} />
         <Route path="/stock" element={<Stock />} />
-        <Route path="/tickets" element={<Protected roles={["admin","management","site_manager"]}><Tickets /></Protected>} />
-        <Route path="/users" element={<Protected roles={["admin", "management"]}><Users /></Protected>} />
+        <Route path="/tickets" element={<Protected roles={["super_admin","process_admin","crm_head","site_supervisor"]}><Tickets /></Protected>} />
+        <Route path="/users" element={<Protected roles={["super_admin", "process_admin"]}><Users /></Protected>} />
         <Route path="/profile" element={<Profile />} />
-        <Route path="/import" element={<Protected roles={["admin","management"]}><ImportExcel /></Protected>} />
-        <Route path="/audit" element={<Protected roles={["admin"]}><AuditLog /></Protected>} />
-        <Route path="/settings" element={<Protected roles={["admin","management"]}><Settings /></Protected>} />
+        <Route path="/import" element={<Protected roles={["super_admin","process_admin"]}><ImportExcel /></Protected>} />
+        <Route path="/audit" element={<Protected roles={["super_admin"]}><AuditLog /></Protected>} />
+        <Route path="/settings" element={<Protected roles={["super_admin","process_admin"]}><Settings /></Protected>} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>

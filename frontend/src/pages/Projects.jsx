@@ -53,7 +53,7 @@ export default function Projects() {
     if (canSetup(user)) {
       try {
         const { data: users } = await api.get("/users");
-        setSiteManagers(users.filter(u => u.role === "site_manager" && u.is_active));
+        setSiteManagers(users.filter(u => u.role === "site_supervisor" && u.is_active));
       } catch (_e) { /* ignore */ }
     }
   };
@@ -134,7 +134,7 @@ export default function Projects() {
   const inviteSm = async () => {
     if (!newSm?.name || !newSm?.email) return toast.error("Name and email required");
     try {
-      const { data } = await api.post("/users", { ...newSm, role: "site_manager" });
+      const { data } = await api.post("/users", { ...newSm, role: "site_supervisor" });
       toast.success(`Invited ${data.user.name}`);
       setSiteManagers(prev => [...prev, data.user]);
       setForm(f => ({ ...f, site_manager_id: data.user.user_id }));

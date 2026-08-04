@@ -15,17 +15,30 @@ const fmt = (n = 0) => "₹" + Math.round(n).toLocaleString("en-IN");
 const dateOnly = (iso) => (iso || "").slice(0, 10);
 
 const STATUS_META = {
-  crm_pending: { label: "CRM Pending", tone: "bg-blue-100 text-blue-800 border-blue-200" },
-  crm_scheduled: { label: "Scheduled", tone: "bg-indigo-100 text-indigo-800 border-indigo-200" },
-  accounts_tracking: { label: "Tracking Payments", tone: "bg-emerald-100 text-emerald-800 border-emerald-200" },
-  sold: { label: "Sold", tone: "bg-amber-100 text-amber-800 border-amber-200" },
+  booked_pending_sales_approval: { label: "Pending Sales Approval", tone: "bg-orange-100 text-orange-800 border-orange-200" },
+  sale_confirmed: { label: "Sale Confirmed", tone: "bg-amber-100 text-amber-800 border-amber-200" },
+  post_sales_active: { label: "Post-Sales Active", tone: "bg-indigo-100 text-indigo-800 border-indigo-200" },
+  fully_paid: { label: "Fully Paid", tone: "bg-emerald-100 text-emerald-800 border-emerald-200" },
+  registration_pending: { label: "Registration Pending", tone: "bg-blue-100 text-blue-800 border-blue-200" },
+  registered: { label: "Registered", tone: "bg-teal-100 text-teal-800 border-teal-200" },
+  possession_pending: { label: "Possession Pending", tone: "bg-cyan-100 text-cyan-800 border-cyan-200" },
+  possession_completed: { label: "Possession Done", tone: "bg-emerald-100 text-emerald-800 border-emerald-200" },
 };
 
 const INST_META = {
   upcoming: { label: "Upcoming", tone: "bg-stone-100 text-stone-700" },
-  initiated: { label: "Initiated by buyer", tone: "bg-blue-100 text-blue-800" },
-  reflected: { label: "Received", tone: "bg-emerald-100 text-emerald-800" },
+  due_soon: { label: "Due Soon", tone: "bg-amber-100 text-amber-800" },
+  due_today: { label: "Due Today", tone: "bg-orange-100 text-orange-800" },
   overdue: { label: "Overdue", tone: "bg-rose-100 text-rose-800" },
+  promise_to_pay: { label: "Promise to Pay", tone: "bg-indigo-100 text-indigo-800" },
+  payment_claimed: { label: "Claimed — Verifying", tone: "bg-blue-100 text-blue-800" },
+  not_reflected: { label: "Not Reflected", tone: "bg-rose-100 text-rose-800" },
+  pending_head_approval: { label: "Pending Head Approval", tone: "bg-yellow-100 text-yellow-800" },
+  partial: { label: "Partial Received", tone: "bg-emerald-100 text-emerald-800" },
+  paid: { label: "Paid", tone: "bg-emerald-100 text-emerald-800" },
+  rejected: { label: "Rejected", tone: "bg-rose-100 text-rose-800" },
+  waived: { label: "Waived", tone: "bg-stone-100 text-stone-700" },
+  rescheduled: { label: "Rescheduled", tone: "bg-slate-100 text-slate-800" },
 };
 
 export default function CRM() {
@@ -52,7 +65,7 @@ export default function CRM() {
 
   const projMap = useMemo(() => Object.fromEntries(projects.map(p => [p.project_id, p])), [projects]);
 
-  const pipeline = units.filter(u => ["sold", "crm_pending", "crm_scheduled", "accounts_tracking"].includes(u.status));
+  const pipeline = units.filter(u => ["booked_pending_sales_approval","sale_confirmed","post_sales_active","fully_paid","registration_pending","registered","possession_pending","possession_completed"].includes(u.status));
 
   useEffect(() => {
     if (unitId) {
@@ -136,7 +149,7 @@ function UnitDetail({ unit, project, templates, installments, reload, onBack }) 
   useEffect(() => setSchedule(installments || []), [installments]);
 
   const totalScheduled = schedule.reduce((s, r) => s + Number(r.amount || 0), 0);
-  const totalReceived = installments.filter(i => i.status === "reflected").reduce((s, i) => s + i.amount, 0);
+  const totalReceived = installments.filter(i => ["paid","partial"].includes(i.status)).reduce((s, i) => s + (i.received_amount || i.amount), 0);
 
   const applyTemplate = () => {
     const tpl = templates.find(t => t.template_id === tplId);
@@ -173,18 +186,28 @@ function UnitDetail({ unit, project, templates, installments, reload, onBack }) 
     } catch (e) { toast.error(apiError(e)); }
   };
 
-  const initiate = async (id) => {
-    try { await api.post(`/installments/${id}/initiate`); toast.success("Marked as initiated"); reload(); }
+  const claim = async (id) => {
+    const amt = window.prompt("Claimed amount ₹");
+    if (!amt) return;
+    const ref = window.prompt("Reference (UTR / cheque no)") || "";
+    try { await api.post(`/installments/${id}/claim`, { claimed_amount: Number(amt), claim_reference: ref, claim_mode: "bank_transfer" }); toast.success("Claimed — Accounts will verify"); reload(); }
     catch (e) { toast.error(apiError(e)); }
   };
-  const reflect = async (id) => {
-    try { await api.post(`/installments/${id}/reflect`); toast.success("Payment reflected"); reload(); }
+  const verify = async (id, reflected) => {
+    const amt = reflected ? window.prompt("Amount reflected in bank ₹") : "0";
+    if (reflected && !amt) return;
+    try { await api.post(`/installments/${id}/verify`, { reflected, received_amount: Number(amt || 0) }); toast.success(reflected ? "Verified · awaiting Head approval" : "Marked not reflected"); reload(); }
+    catch (e) { toast.error(apiError(e)); }
+  };
+  const approve = async (id, action) => {
+    try { await api.post(`/installments/${id}/approve`, { action, note: "" }); toast.success(action === "approve" ? "Payment approved" : "Payment rejected"); reload(); }
     catch (e) { toast.error(apiError(e)); }
   };
 
-  const canSchedule = can(user, "admin", "management", "crm");
-  const isCRM = can(user, "admin", "crm", "management");
-  const isAccounts = can(user, "admin", "accounts");
+  const canSchedule = can(user, "super_admin", "process_admin", "crm_head");
+  const isCRM = can(user, "super_admin", "crm_head", "post_sales_rep", "process_admin");
+  const isAcctRep = can(user, "super_admin", "accounts_head", "accounts_rep");
+  const isAcctHead = can(user, "super_admin", "accounts_head");
   const readOnly = installments.length > 0;
 
   return (
@@ -295,17 +318,27 @@ function UnitDetail({ unit, project, templates, installments, reload, onBack }) 
                     <TableCell className="text-stone-600">{inst.due_date}</TableCell>
                     <TableCell><span className={`text-xs px-2 py-0.5 rounded-full ${meta.tone}`}>{meta.label}</span></TableCell>
                     <TableCell className="text-right">
-                      {inst.status === "upcoming" && isCRM && (
-                        <Button size="sm" variant="outline" onClick={() => initiate(inst.installment_id)} data-testid={`initiate-btn-${inst.stage_name}`}>
-                          <Clock className="w-3 h-3 mr-1" /> Mark initiated
+                      {["upcoming","due_soon","due_today","overdue"].includes(inst.status) && isCRM && (
+                        <Button size="sm" variant="outline" onClick={() => claim(inst.installment_id)} data-testid={`claim-btn-${inst.stage_name}`}>
+                          <Clock className="w-3 h-3 mr-1" /> Customer claimed
                         </Button>
                       )}
-                      {inst.status === "initiated" && isAccounts && (
-                        <Button size="sm" className="bg-emerald-900 hover:bg-emerald-800" onClick={() => reflect(inst.installment_id)} data-testid={`reflect-btn-${inst.stage_name}`}>
-                          <CheckCircle2 className="w-3 h-3 mr-1" /> Confirm received
-                        </Button>
+                      {inst.status === "payment_claimed" && isAcctRep && (
+                        <div className="inline-flex gap-1">
+                          <Button size="sm" variant="outline" onClick={() => verify(inst.installment_id, false)}>Not reflected</Button>
+                          <Button size="sm" className="bg-emerald-900 hover:bg-emerald-800" onClick={() => verify(inst.installment_id, true)} data-testid={`verify-btn-${inst.stage_name}`}>Reflected</Button>
+                        </div>
                       )}
-                      {inst.status === "reflected" && <span className="text-xs text-emerald-800">Received</span>}
+                      {inst.status === "pending_head_approval" && isAcctHead && (
+                        <div className="inline-flex gap-1">
+                          <Button size="sm" variant="outline" onClick={() => approve(inst.installment_id, "reject")}>Reject</Button>
+                          <Button size="sm" className="bg-emerald-900 hover:bg-emerald-800" onClick={() => approve(inst.installment_id, "approve")} data-testid={`approve-btn-${inst.stage_name}`}>
+                            <CheckCircle2 className="w-3 h-3 mr-1" /> Approve
+                          </Button>
+                        </div>
+                      )}
+                      {["paid","partial"].includes(inst.status) && <span className="text-xs text-emerald-800">Received</span>}
+                      {inst.status === "not_reflected" && <span className="text-xs text-rose-700">Follow up</span>}
                     </TableCell>
                   </TableRow>
                 );

@@ -107,12 +107,31 @@ def get_object(path: str) -> tuple[bytes, str]:
 
 
 # -------------------------------------------------------------- models -----
-Role = Literal["admin", "management", "accounts", "sales", "crm", "site_manager"]
-ROLE_ORDER = ["admin", "management", "accounts", "sales", "crm", "site_manager"]
+Role = Literal["super_admin", "process_admin",
+               "sales_head", "sales_rep",
+               "accounts_head", "accounts_rep",
+               "crm_head", "post_sales_rep",
+               "site_supervisor"]
+ROLE_ORDER = ["super_admin", "process_admin",
+              "crm_head", "sales_head", "accounts_head",
+              "sales_rep", "post_sales_rep", "accounts_rep",
+              "site_supervisor"]
 ROLE_LABELS = {
-    "admin": "Admin", "management": "Management", "accounts": "Accounts",
-    "sales": "Sales", "crm": "CRM", "site_manager": "Site Manager",
+    "super_admin": "Super Admin",
+    "process_admin": "Process Admin",
+    "crm_head": "CRM Head",
+    "sales_head": "Sales Head",
+    "accounts_head": "Accounts Head",
+    "sales_rep": "Sales Representative",
+    "post_sales_rep": "Post-Sales Representative",
+    "accounts_rep": "Accounts Representative",
+    "site_supervisor": "Site Supervisor",
 }
+# Convenience sets used by RBAC checks
+ADMIN_TIER = ("super_admin", "process_admin")
+HEADS = ("super_admin", "process_admin", "crm_head", "sales_head", "accounts_head")
+SETUP_ROLES = ("super_admin", "process_admin")
+FINAL_APPROVERS = ("super_admin",)  # only Super Admin gives final approval
 ExpenseStatus = Literal["pending", "stage1_approved", "final_approved",
                         "rejected"]
 
@@ -132,7 +151,7 @@ class User(BaseModel):
     name: str
     phone: Optional[str] = None
     picture: Optional[str] = None
-    role: Role = "site_manager"
+    role: Role = "site_supervisor"
     project_ids: List[str] = []
     password_hash: Optional[str] = None
     must_reset_password: bool = True
@@ -218,8 +237,13 @@ class PLCEntry(BaseModel):
     amount: float = 0
 
 
-UnitStatus = Literal["available", "sold", "crm_pending",
-                     "crm_scheduled", "accounts_tracking", "cancelled"]
+UnitStatus = Literal[
+    "available", "on_hold", "temporarily_blocked", "booking_in_progress",
+    "booked_pending_sales_approval", "sale_confirmed", "post_sales_active",
+    "fully_paid", "registration_pending", "registered",
+    "possession_pending", "possession_completed",
+    "cancelled", "available_for_resale",
+]
 
 
 class Unit(BaseModel):
@@ -241,6 +265,10 @@ class Unit(BaseModel):
     payment_plan_template_id: Optional[str] = None
     sold_by: Optional[str] = None
     sold_at: Optional[str] = None
+    # Sales Head approval (2-step)
+    sales_approved_by: Optional[str] = None
+    sales_approved_at: Optional[str] = None
+    sales_review_note: Optional[str] = None
     # CRM scheduling
     schedule_created_by: Optional[str] = None
     schedule_created_at: Optional[str] = None
@@ -295,7 +323,12 @@ class PaymentPlanTemplateCreate(BaseModel):
     stages: List[PlanStage]
 
 
-InstallmentStatus = Literal["upcoming", "initiated", "reflected", "overdue"]
+InstallmentStatus = Literal[
+    "upcoming", "due_soon", "due_today", "overdue",
+    "promise_to_pay", "payment_claimed",
+    "not_reflected", "partial",
+    "pending_head_approval", "paid", "rejected", "waived", "rescheduled",
+]
 
 
 class Installment(BaseModel):
@@ -306,8 +339,27 @@ class Installment(BaseModel):
     stage_name: str
     percent: float
     amount: float
-    due_date: str  # ISO date
+    due_date: str  # ISO date — original contractual due date (NEVER overwritten)
+    revised_due_date: Optional[str] = None  # If rescheduled
     status: InstallmentStatus = "upcoming"
+    # Promise-to-Pay
+    promise_amount: float = 0
+    promise_date: Optional[str] = None
+    promise_notes: str = ""
+    # Payment claim (by Post-Sales)
+    claimed_amount: float = 0
+    claimed_at: Optional[str] = None
+    claimed_by: Optional[str] = None
+    claim_reference: str = ""
+    claim_mode: str = ""
+    # Bank verification (by Accounts Rep)
+    verified_at: Optional[str] = None
+    verified_by: Optional[str] = None
+    received_amount: float = 0  # amount actually reflected in bank
+    # Final approval (by Accounts Head)
+    approved_at: Optional[str] = None
+    approved_by: Optional[str] = None
+    # Legacy fields (kept for compat)
     initiated_at: Optional[str] = None
     initiated_by: Optional[str] = None
     reflected_at: Optional[str] = None
@@ -650,14 +702,23 @@ def require_roles(*roles: Role):
 
 def user_scope_projects(user: User) -> Optional[List[str]]:
     """Return None (all projects) or list of project_ids the user can see."""
-    if user.role in ("admin", "accounts", "management", "sales", "crm"):
+    # Admin tier + heads + sales/CRM reps see all projects (they act across the org).
+    global_roles = set(ADMIN_TIER) | set(HEADS) | {"sales_rep", "post_sales_rep", "accounts_rep"}
+    if user.role in global_roles:
         return None
+    # Site Supervisor is scoped to assigned projects only.
     return user.project_ids or []
 
 
 def is_setup_role(user: User) -> bool:
-    """Users who can create/edit projects, units, and templates."""
-    return user.role in ("admin", "management")
+    """Users who can create/edit projects, units, and templates (subject to Super Admin approval)."""
+    return user.role in SETUP_ROLES
+
+
+def _mgmt_cannot_touch_admin(actor: User, target: dict) -> None:
+    """Process Admin is not allowed to modify Super Admin accounts."""
+    if actor.role == "process_admin" and target.get("role") == "super_admin":
+        raise HTTPException(403, "Process Admin cannot modify Super Admin accounts")
 
 
 # --------------------------------------- project-type inventory schemas ----
@@ -892,23 +953,17 @@ async def forgot_password(payload: ForgotPasswordRequest):
 
 
 # ------------------------------------------------------ users --------------
-def _mgmt_cannot_touch_admin(actor: User, target: dict) -> None:
-    """Management is not allowed to modify Admin accounts."""
-    if actor.role == "management" and target.get("role") == "admin":
-        raise HTTPException(403, "Management cannot modify Admin accounts")
-
-
 @api.get("/users")
-async def list_users(user: User = Depends(require_roles("admin", "management"))):
+async def list_users(user: User = Depends(require_roles("super_admin", "process_admin"))):
     docs = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
     return docs
 
 
 @api.post("/users")
 async def create_user(payload: UserCreate,
-                      user: User = Depends(require_roles("admin", "management"))):
+                      user: User = Depends(require_roles("super_admin", "process_admin"))):
     # Management cannot create admins
-    if user.role == "management" and payload.role == "admin":
+    if user.role == "process_admin" and payload.role == "super_admin":
         raise HTTPException(403, "Management cannot create Admin accounts")
     existing = await db.users.find_one({"email": payload.email.lower()})
     if existing:
@@ -937,7 +992,7 @@ async def create_user(payload: UserCreate,
 
 @api.post("/users/{user_id}/reset-password")
 async def admin_reset_password(user_id: str,
-                               actor: User = Depends(require_roles("admin", "management"))):
+                               actor: User = Depends(require_roles("super_admin", "process_admin"))):
     """Admin/Management regenerates a temp password for a user."""
     u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     if not u:
@@ -961,7 +1016,7 @@ async def admin_reset_password(user_id: str,
 
 @api.patch("/users/{user_id}")
 async def update_user(user_id: str, payload: UserUpdate,
-                      user: User = Depends(require_roles("admin", "management"))):
+                      user: User = Depends(require_roles("super_admin", "process_admin"))):
     target = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     if not target:
         raise HTTPException(404, "User not found")
@@ -970,7 +1025,7 @@ async def update_user(user_id: str, payload: UserUpdate,
     if not update:
         raise HTTPException(400, "Nothing to update")
     # Management cannot promote anyone to admin
-    if user.role == "management" and update.get("role") == "admin":
+    if user.role == "process_admin" and update.get("role") == "super_admin":
         raise HTTPException(403, "Management cannot assign Admin role")
     r = await db.users.update_one({"user_id": user_id}, {"$set": update})
     if r.matched_count == 0:
@@ -983,7 +1038,7 @@ async def update_user(user_id: str, payload: UserUpdate,
 
 @api.delete("/users/{user_id}")
 async def deactivate_user(user_id: str,
-                          user: User = Depends(require_roles("admin", "management"))):
+                          user: User = Depends(require_roles("super_admin", "process_admin"))):
     target = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     if not target:
         raise HTTPException(404, "User not found")
@@ -1000,7 +1055,7 @@ async def deactivate_user(user_id: str,
 
 @api.post("/users/{user_id}/reactivate")
 async def reactivate_user(user_id: str,
-                          user: User = Depends(require_roles("admin", "management"))):
+                          user: User = Depends(require_roles("super_admin", "process_admin"))):
     target = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     if not target:
         raise HTTPException(404, "User not found")
@@ -1063,7 +1118,7 @@ async def list_projects(user: User = Depends(get_current_user)):
 
 @api.post("/projects")
 async def create_project(payload: ProjectCreate,
-                         user: User = Depends(require_roles("admin", "management"))):
+                         user: User = Depends(require_roles("super_admin", "process_admin"))):
     p = Project(**payload.model_dump())
     await db.projects.insert_one(p.model_dump())
     await audit(user.user_id, "create_project", "project", p.project_id,
@@ -1073,7 +1128,7 @@ async def create_project(payload: ProjectCreate,
 
 @api.patch("/projects/{project_id}")
 async def update_project(project_id: str, payload: ProjectCreate,
-                         user: User = Depends(require_roles("admin", "management"))):
+                         user: User = Depends(require_roles("super_admin", "process_admin"))):
     upd = {k: v for k, v in payload.model_dump().items() if v is not None}
     r = await db.projects.update_one({"project_id": project_id}, {"$set": upd})
     if r.matched_count == 0:
@@ -1090,7 +1145,7 @@ async def project_types_schemas():
 
 @api.get("/projects/{project_id}/impact")
 async def project_impact(project_id: str,
-                         user: User = Depends(require_roles("admin", "management"))):
+                         user: User = Depends(require_roles("super_admin", "process_admin"))):
     users = await db.users.count_documents({"project_ids": project_id})
     units = await db.units.count_documents({"project_id": project_id})
     payments = await db.payments.count_documents({"project_id": project_id})
@@ -1102,7 +1157,7 @@ async def project_impact(project_id: str,
 
 @api.delete("/projects/{project_id}")
 async def delete_project(project_id: str,
-                         user: User = Depends(require_roles("admin"))):
+                         user: User = Depends(require_roles("super_admin"))):
     n_users = await db.users.count_documents({"project_ids": project_id})
     if n_users > 0:
         raise HTTPException(
@@ -1138,7 +1193,7 @@ async def list_units(project_id: Optional[str] = None,
 
 @api.post("/units")
 async def create_unit(payload: UnitCreate,
-                      user: User = Depends(require_roles("admin", "management"))):
+                      user: User = Depends(require_roles("super_admin", "process_admin"))):
     u = Unit(**payload.model_dump())
     await db.units.insert_one(u.model_dump())
     await audit(user.user_id, "create_unit", "unit", u.unit_id,
@@ -1148,7 +1203,7 @@ async def create_unit(payload: UnitCreate,
 
 @api.patch("/units/{unit_id}")
 async def update_unit(unit_id: str, payload: UnitUpdate,
-                      user: User = Depends(require_roles("admin", "management"))):
+                      user: User = Depends(require_roles("super_admin", "process_admin"))):
     upd = {k: v for k, v in payload.model_dump(exclude_none=True).items()}
     if not upd:
         raise HTTPException(400, "Nothing to update")
@@ -1161,15 +1216,21 @@ async def update_unit(unit_id: str, payload: UnitUpdate,
 
 @api.post("/units/{unit_id}/sell")
 async def mark_sold(unit_id: str, payload: SellUnitRequest,
-                    user: User = Depends(require_roles("admin", "sales", "management"))):
+                    user: User = Depends(require_roles("super_admin", "sales_rep", "sales_head", "process_admin"))):
     unit = await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
     if not unit:
         raise HTTPException(404, "Unit not found")
-    if unit["status"] in ("sold", "crm_pending", "crm_scheduled",
-                          "accounts_tracking"):
+    SOLD_STATES_ANY = ("booked_pending_sales_approval", "sale_confirmed",
+                      "post_sales_active", "fully_paid", "registration_pending",
+                      "registered", "possession_pending", "possession_completed")
+    if unit["status"] in SOLD_STATES_ANY:
         raise HTTPException(400, "Unit is already in the sale pipeline")
+    # Sales Rep drafts → pending Sales Head approval. Sales Head / Super Admin
+    # entering the sale directly can self-approve (skip the pending state).
+    self_approve = user.role in ("sales_head", "super_admin", "process_admin")
+    new_status = "sale_confirmed" if self_approve else "booked_pending_sales_approval"
     upd = {
-        "status": "crm_pending",
+        "status": new_status,
         "owner_name": payload.owner_name,
         "owner_contact": payload.owner_contact,
         "owner_email": payload.owner_email,
@@ -1178,28 +1239,99 @@ async def mark_sold(unit_id: str, payload: SellUnitRequest,
         "payment_plan_template_id": payload.payment_plan_template_id,
         "sold_by": user.user_id,
         "sold_at": now(),
+        "sales_approved_by": user.user_id if self_approve else None,
+        "sales_approved_at": now() if self_approve else None,
     }
     await db.units.update_one({"unit_id": unit_id}, {"$set": upd})
     await audit(user.user_id, "sell_unit", "unit", unit_id, upd)
-    # Notify Admin, Accounts, CRM
     proj = await db.projects.find_one({"project_id": unit["project_id"]},
                                       {"_id": 0}) or {}
-    msg = (f"Unit {unit.get('plot_number', unit_id)} in "
-           f"{proj.get('name', 'project')} sold to {payload.owner_name}")
-    async for u in db.users.find(
-            {"role": {"$in": ["admin", "accounts", "crm"]}, "is_active": True},
-            {"_id": 0}):
-        await notify(u["user_id"], "unit_sold", msg,
-                     link=f"/crm/{unit_id}")
-        send_email(u["email"], "Unit sold — CRM handoff required",
-                   f"<p>{msg}</p><p>Total price: "
-                   f"₹{payload.total_price:,.0f}</p>")
+    if self_approve:
+        # Directly move to CRM
+        msg = (f"Unit {unit.get('plot_number', unit_id)} in "
+               f"{proj.get('name', 'project')} sold to {payload.owner_name}")
+        async for u in db.users.find(
+                {"role": {"$in": ["super_admin", "crm_head", "post_sales_rep", "accounts_head", "accounts_rep"]},
+                 "is_active": True}, {"_id": 0}):
+            await notify(u["user_id"], "unit_sold", msg,
+                         link=f"/crm/{unit_id}")
+            send_email(u["email"], "Unit sold — CRM handoff required",
+                       f"<p>{msg}</p><p>Total price: "
+                       f"₹{payload.total_price:,.0f}</p>")
+    else:
+        msg = (f"New booking pending your approval: Plot "
+               f"{unit.get('plot_number', unit_id)} in "
+               f"{proj.get('name', 'project')} — "
+               f"₹{payload.total_price:,.0f} · {payload.owner_name}")
+        async for u in db.users.find(
+                {"role": {"$in": ["sales_head", "super_admin"]}, "is_active": True},
+                {"_id": 0}):
+            await notify(u["user_id"], "sale_pending_approval", msg,
+                         link=f"/sales-approvals/{unit_id}")
+            send_email(u["email"], "New booking pending approval",
+                       f"<p>{msg}</p>")
+    return await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
+
+
+class SaleReview(BaseModel):
+    action: Literal["approve", "reject", "return"]
+    note: str = ""
+
+
+@api.post("/units/{unit_id}/sales-review")
+async def sales_head_review(unit_id: str, payload: SaleReview,
+                            user: User = Depends(require_roles("super_admin", "sales_head"))):
+    unit = await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
+    if not unit:
+        raise HTTPException(404, "Unit not found")
+    if unit["status"] != "booked_pending_sales_approval":
+        raise HTTPException(400, "Sale is not pending approval")
+    if payload.action == "approve":
+        await db.units.update_one({"unit_id": unit_id},
+                                  {"$set": {"status": "sale_confirmed",
+                                            "sales_approved_by": user.user_id,
+                                            "sales_approved_at": now(),
+                                            "sales_review_note": payload.note}})
+        await audit(user.user_id, "approve_sale", "unit", unit_id,
+                    {"note": payload.note})
+        # notify CRM + Accounts + Post-Sales
+        proj = await db.projects.find_one({"project_id": unit["project_id"]},
+                                          {"_id": 0}) or {}
+        msg = f"Booking approved: Plot {unit['plot_number']} in {proj.get('name','')} · {unit['owner_name']}"
+        async for u in db.users.find(
+                {"role": {"$in": ["super_admin", "crm_head", "post_sales_rep", "accounts_head", "accounts_rep"]},
+                 "is_active": True}, {"_id": 0}):
+            await notify(u["user_id"], "sale_approved", msg,
+                         link=f"/crm/{unit_id}")
+    elif payload.action == "reject":
+        await db.units.update_one({"unit_id": unit_id},
+                                  {"$set": {"status": "available",
+                                            "owner_name": None, "owner_contact": None,
+                                            "owner_email": None, "discount": 0,
+                                            "total_price": 0,
+                                            "payment_plan_template_id": None,
+                                            "sales_review_note": payload.note}})
+        await audit(user.user_id, "reject_sale", "unit", unit_id,
+                    {"note": payload.note})
+        # notify original sales rep
+        if unit.get("sold_by"):
+            await notify(unit["sold_by"], "sale_rejected",
+                         f"Your booking for Plot {unit['plot_number']} was rejected. Reason: {payload.note}",
+                         link=f"/sales")
+    else:  # return
+        # Keep pending; sales rep sees the note and re-submits
+        await db.units.update_one({"unit_id": unit_id},
+                                  {"$set": {"sales_review_note": payload.note}})
+        if unit.get("sold_by"):
+            await notify(unit["sold_by"], "sale_returned",
+                         f"Your booking for Plot {unit['plot_number']} was returned for revision. Note: {payload.note}",
+                         link=f"/sales")
     return await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
 
 
 @api.post("/units/{unit_id}/cancel-sale")
 async def cancel_sale(unit_id: str,
-                      user: User = Depends(require_roles("admin", "management"))):
+                      user: User = Depends(require_roles("super_admin", "process_admin"))):
     unit = await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
     if not unit:
         raise HTTPException(404, "Unit not found")
@@ -1224,7 +1356,7 @@ async def list_templates(user: User = Depends(get_current_user)):
 
 @api.post("/payment-templates")
 async def create_template(payload: PaymentPlanTemplateCreate,
-                          user: User = Depends(require_roles("admin", "management"))):
+                          user: User = Depends(require_roles("super_admin", "process_admin"))):
     total = sum(s.percent for s in payload.stages)
     if abs(total - 100) > 0.01:
         raise HTTPException(400, f"Stages must sum to 100% (got {total})")
@@ -1237,7 +1369,7 @@ async def create_template(payload: PaymentPlanTemplateCreate,
 
 @api.delete("/payment-templates/{template_id}")
 async def delete_template(template_id: str,
-                          user: User = Depends(require_roles("admin", "management"))):
+                          user: User = Depends(require_roles("super_admin", "process_admin"))):
     r = await db.payment_templates.delete_one({"template_id": template_id})
     if r.deleted_count == 0:
         raise HTTPException(404, "Template not found")
@@ -1256,7 +1388,7 @@ async def list_installments(unit_id: str,
 
 @api.post("/units/{unit_id}/installments")
 async def create_installments(unit_id: str, payload: List[InstallmentCreate],
-                              user: User = Depends(require_roles("admin", "crm", "management"))):
+                              user: User = Depends(require_roles("super_admin", "crm_head", "post_sales_rep", "process_admin"))):
     unit = await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
     if not unit:
         raise HTTPException(404, "Unit not found")
@@ -1271,7 +1403,7 @@ async def create_installments(unit_id: str, payload: List[InstallmentCreate],
         docs.append(inst.model_dump())
     if docs:
         await db.installments.insert_many(docs)
-    new_status = "crm_scheduled" if docs else "crm_pending"
+    new_status = "post_sales_active" if docs else "sale_confirmed"
     await db.units.update_one(
         {"unit_id": unit_id},
         {"$set": {"status": new_status,
@@ -1280,69 +1412,171 @@ async def create_installments(unit_id: str, payload: List[InstallmentCreate],
     await audit(user.user_id, "create_schedule", "unit", unit_id,
                 {"count": len(docs)})
     if docs:
-        # Notify Admin and Accounts that schedule is ready for tracking
         proj = await db.projects.find_one({"project_id": unit["project_id"]},
                                           {"_id": 0}) or {}
         msg = (f"Payment schedule ready for "
                f"{unit.get('plot_number', unit_id)} in "
                f"{proj.get('name', 'project')}")
         async for u in db.users.find(
-                {"role": {"$in": ["admin", "accounts"]}, "is_active": True},
+                {"role": {"$in": ["super_admin", "accounts_head", "accounts_rep"]}, "is_active": True},
                 {"_id": 0}):
             await notify(u["user_id"], "schedule_created", msg,
                          link=f"/crm/{unit_id}")
     return {"created": len(docs)}
 
 
-@api.post("/installments/{installment_id}/initiate")
-async def initiate_installment(installment_id: str,
-                               user: User = Depends(require_roles("admin", "crm"))):
+class PromiseToPayRequest(BaseModel):
+    promise_amount: float
+    promise_date: str
+    notes: str = ""
+
+
+@api.post("/installments/{installment_id}/promise-to-pay")
+async def record_promise_to_pay(installment_id: str, payload: PromiseToPayRequest,
+                                user: User = Depends(require_roles("super_admin", "crm_head", "post_sales_rep"))):
     r = await db.installments.update_one(
-        {"installment_id": installment_id, "status": {"$in": ["upcoming", "overdue"]}},
-        {"$set": {"status": "initiated", "initiated_at": now(),
-                  "initiated_by": user.user_id}})
+        {"installment_id": installment_id,
+         "status": {"$in": ["upcoming", "due_soon", "due_today", "overdue"]}},
+        {"$set": {"status": "promise_to_pay",
+                  "promise_amount": payload.promise_amount,
+                  "promise_date": payload.promise_date,
+                  "promise_notes": payload.notes}})
     if r.matched_count == 0:
-        raise HTTPException(404, "Installment not found or not actionable")
-    inst = await db.installments.find_one(
-        {"installment_id": installment_id}, {"_id": 0})
-    unit = await db.units.find_one({"unit_id": inst["unit_id"]}, {"_id": 0})
-    if unit["status"] != "accounts_tracking":
-        await db.units.update_one({"unit_id": unit["unit_id"]},
-                                  {"$set": {"status": "accounts_tracking"}})
-    # notify accounts
+        raise HTTPException(404, "Installment not actionable")
+    await audit(user.user_id, "promise_to_pay", "installment", installment_id,
+                payload.model_dump())
+    return await db.installments.find_one({"installment_id": installment_id}, {"_id": 0})
+
+
+class PaymentClaimRequest(BaseModel):
+    claimed_amount: float
+    claim_reference: str = ""
+    claim_mode: str = "bank_transfer"
+    notes: str = ""
+
+
+@api.post("/installments/{installment_id}/claim")
+async def claim_payment(installment_id: str, payload: PaymentClaimRequest,
+                        user: User = Depends(require_roles("super_admin", "crm_head", "post_sales_rep"))):
+    """Post-Sales records that the customer has initiated a payment."""
+    inst = await db.installments.find_one({"installment_id": installment_id}, {"_id": 0})
+    if not inst:
+        raise HTTPException(404, "Installment not found")
+    await db.installments.update_one(
+        {"installment_id": installment_id},
+        {"$set": {"status": "payment_claimed",
+                  "claimed_amount": payload.claimed_amount,
+                  "claimed_at": now(),
+                  "claimed_by": user.user_id,
+                  "claim_reference": payload.claim_reference,
+                  "claim_mode": payload.claim_mode,
+                  "notes": payload.notes}})
+    unit = await db.units.find_one({"unit_id": inst["unit_id"]}, {"_id": 0}) or {}
     async for u in db.users.find(
-            {"role": {"$in": ["admin", "accounts"]}, "is_active": True},
-            {"_id": 0}):
-        await notify(u["user_id"], "payment_initiated",
-                     f"₹{inst['amount']:,.0f} initiated for "
-                     f"{unit.get('plot_number','')}",
-                     link=f"/crm/{unit['unit_id']}")
-    await audit(user.user_id, "initiate_installment", "installment",
-                installment_id, {})
-    return inst
+            {"role": {"$in": ["super_admin", "accounts_head", "accounts_rep"]},
+             "is_active": True}, {"_id": 0}):
+        await notify(u["user_id"], "payment_claimed",
+                     f"₹{payload.claimed_amount:,.0f} claimed for {unit.get('plot_number','')} · verify in bank",
+                     link=f"/crm/{inst['unit_id']}")
+    await audit(user.user_id, "claim_payment", "installment", installment_id,
+                payload.model_dump())
+    return await db.installments.find_one({"installment_id": installment_id}, {"_id": 0})
 
 
-@api.post("/installments/{installment_id}/reflect")
-async def reflect_installment(installment_id: str,
-                              user: User = Depends(require_roles("admin", "accounts"))):
-    r = await db.installments.update_one(
-        {"installment_id": installment_id, "status": "initiated"},
-        {"$set": {"status": "reflected", "reflected_at": now(),
-                  "reflected_by": user.user_id}})
-    if r.matched_count == 0:
-        raise HTTPException(404, "Installment not initiated yet")
-    inst = await db.installments.find_one(
-        {"installment_id": installment_id}, {"_id": 0})
-    # Also record as a payment for revenue continuity
-    unit = await db.units.find_one({"unit_id": inst["unit_id"]}, {"_id": 0})
-    p = Payment(project_id=unit["project_id"], unit_id=inst["unit_id"],
-                amount=inst["amount"], mode="bank_transfer",
-                reference=f"Installment {inst['stage_name']}",
+class BankVerifyRequest(BaseModel):
+    reflected: bool
+    received_amount: float = 0
+    reference: str = ""
+    notes: str = ""
+
+
+@api.post("/installments/{installment_id}/verify")
+async def verify_bank(installment_id: str, payload: BankVerifyRequest,
+                      user: User = Depends(require_roles("super_admin", "accounts_head", "accounts_rep"))):
+    """Accounts Rep confirms whether the amount reflected in the bank."""
+    inst = await db.installments.find_one({"installment_id": installment_id}, {"_id": 0})
+    if not inst:
+        raise HTTPException(404, "Installment not found")
+    if not payload.reflected:
+        await db.installments.update_one(
+            {"installment_id": installment_id},
+            {"$set": {"status": "not_reflected",
+                      "verified_at": now(),
+                      "verified_by": user.user_id,
+                      "notes": payload.notes}})
+        # notify post-sales
+        if inst.get("claimed_by"):
+            await notify(inst["claimed_by"], "not_reflected",
+                         f"Payment not reflected for installment {inst['stage_name']}. Please follow up with customer.",
+                         link=f"/crm/{inst['unit_id']}")
+        await audit(user.user_id, "verify_not_reflected", "installment",
+                    installment_id, payload.model_dump())
+        return await db.installments.find_one({"installment_id": installment_id}, {"_id": 0})
+    # Reflected — awaits Head approval
+    is_partial = payload.received_amount < inst["amount"] - 0.01
+    await db.installments.update_one(
+        {"installment_id": installment_id},
+        {"$set": {"status": "pending_head_approval",
+                  "verified_at": now(),
+                  "verified_by": user.user_id,
+                  "received_amount": payload.received_amount,
+                  "claim_reference": payload.reference or inst.get("claim_reference", ""),
+                  "notes": payload.notes}})
+    async for u in db.users.find(
+            {"role": "accounts_head", "is_active": True}, {"_id": 0}):
+        await notify(u["user_id"], "verify_pending_approval",
+                     f"₹{payload.received_amount:,.0f} verified — please approve" +
+                     (" (partial)" if is_partial else ""),
+                     link=f"/crm/{inst['unit_id']}")
+    await audit(user.user_id, "verify_reflected", "installment",
+                installment_id, payload.model_dump())
+    return await db.installments.find_one({"installment_id": installment_id}, {"_id": 0})
+
+
+class AccountsApproveRequest(BaseModel):
+    action: Literal["approve", "reject"]
+    note: str = ""
+
+
+@api.post("/installments/{installment_id}/approve")
+async def accounts_head_approve(installment_id: str, payload: AccountsApproveRequest,
+                                user: User = Depends(require_roles("super_admin", "accounts_head"))):
+    """Accounts Head gives final approval, creating a payment record."""
+    inst = await db.installments.find_one({"installment_id": installment_id}, {"_id": 0})
+    if not inst:
+        raise HTTPException(404, "Installment not found")
+    if inst["status"] != "pending_head_approval":
+        raise HTTPException(400, "Installment not awaiting head approval")
+    if payload.action == "reject":
+        await db.installments.update_one(
+            {"installment_id": installment_id},
+            {"$set": {"status": "rejected", "notes": payload.note}})
+        await audit(user.user_id, "reject_payment", "installment",
+                    installment_id, payload.model_dump())
+        return await db.installments.find_one({"installment_id": installment_id}, {"_id": 0})
+    # Approve
+    is_partial = inst["received_amount"] < inst["amount"] - 0.01
+    final_status = "partial" if is_partial else "paid"
+    await db.installments.update_one(
+        {"installment_id": installment_id},
+        {"$set": {"status": final_status,
+                  "approved_at": now(),
+                  "approved_by": user.user_id}})
+    unit = await db.units.find_one({"unit_id": inst["unit_id"]}, {"_id": 0}) or {}
+    p = Payment(project_id=unit.get("project_id", ""), unit_id=inst["unit_id"],
+                amount=inst["received_amount"], mode=inst.get("claim_mode", "bank_transfer"),
+                reference=inst.get("claim_reference", "") or f"Installment {inst['stage_name']}",
                 paid_on=now()[:10], recorded_by=user.user_id)
     await db.payments.insert_one(p.model_dump())
-    await audit(user.user_id, "reflect_installment", "installment",
-                installment_id, {})
-    return inst
+    # If all installments paid, mark unit fully_paid
+    outstanding = await db.installments.count_documents(
+        {"unit_id": inst["unit_id"], "status": {"$nin": ["paid", "waived"]}})
+    if outstanding == 0:
+        await db.units.update_one({"unit_id": inst["unit_id"]},
+                                  {"$set": {"status": "fully_paid"}})
+    await audit(user.user_id, "approve_payment", "installment",
+                installment_id, {"amount": inst["received_amount"]})
+    return await db.installments.find_one({"installment_id": installment_id}, {"_id": 0})
 
 
 # ---------------------------------------------------------- tickets -------
@@ -1361,8 +1595,8 @@ async def list_tickets(project_id: Optional[str] = None,
 
 @api.post("/tickets")
 async def create_ticket(payload: TicketCreate,
-                        user: User = Depends(require_roles("site_manager", "admin", "management"))):
-    if user.role == "site_manager" and payload.project_id not in user.project_ids:
+                        user: User = Depends(require_roles("site_supervisor", "super_admin", "process_admin", "crm_head"))):
+    if user.role == "site_supervisor" and payload.project_id not in user.project_ids:
         raise HTTPException(403, "Project not in your scope")
     t = Ticket(**payload.model_dump(), raised_by=user.user_id)
     await db.tickets.insert_one(t.model_dump())
@@ -1370,7 +1604,7 @@ async def create_ticket(payload: TicketCreate,
                 {"subject": t.subject})
     # notify admin + management
     async for u in db.users.find(
-            {"role": {"$in": ["admin", "management"]}, "is_active": True},
+            {"role": {"$in": ["super_admin", "process_admin", "crm_head"]}, "is_active": True},
             {"_id": 0}):
         await notify(u["user_id"], "ticket_new",
                      f"{t.severity.upper()} · {t.subject}",
@@ -1380,7 +1614,7 @@ async def create_ticket(payload: TicketCreate,
 
 @api.patch("/tickets/{ticket_id}")
 async def resolve_ticket(ticket_id: str, payload: TicketResolve,
-                         user: User = Depends(require_roles("admin", "management"))):
+                         user: User = Depends(require_roles("super_admin", "process_admin"))):
     upd = {"status": payload.status, "resolution_note": payload.resolution_note}
     if payload.status in ("resolved", "closed"):
         upd["resolved_by"] = user.user_id
@@ -1412,7 +1646,7 @@ async def list_payments(project_id: Optional[str] = None,
 
 @api.post("/payments")
 async def create_payment(payload: PaymentCreate,
-                         user: User = Depends(require_roles("admin", "accounts"))):
+                         user: User = Depends(require_roles("super_admin", "accounts_head", "accounts_rep"))):
     unit = await db.units.find_one({"unit_id": payload.unit_id}, {"_id": 0})
     if not unit:
         raise HTTPException(404, "Unit not found")
@@ -1441,7 +1675,10 @@ async def revenue_summary(project_id: Optional[str] = None,
     pay_q: dict = {"unit_id": {"$in": unit_ids}}
     payments = await db.payments.find(pay_q, {"_id": 0}).to_list(10000)
 
-    SOLD_STATES = ("sold", "crm_pending", "crm_scheduled", "accounts_tracking")
+    SOLD_STATES = ("sale_confirmed", "post_sales_active", "fully_paid",
+                   "registration_pending", "registered",
+                   "possession_pending", "possession_completed",
+                   "booked_pending_sales_approval")
     accrued = sum(u.get("total_price", 0) or u.get("price", 0)
                   for u in units if u["status"] in SOLD_STATES)
     received = sum(p["amount"] for p in payments)
@@ -1495,8 +1732,10 @@ async def _compute_period_actuals(scope_pids: Optional[list[str]],
         if k in key_set:
             out[k]["received"] += p["amount"]
 
-    unit_q: dict = {"status": {"$in": ["sold", "crm_pending",
-                                       "crm_scheduled", "accounts_tracking"]}}
+    unit_q: dict = {"status": {"$in": ["sale_confirmed", "post_sales_active",
+                                       "fully_paid", "registration_pending",
+                                       "registered", "possession_pending",
+                                       "possession_completed"]}}
     if scope_pids:
         unit_q["project_id"] = {"$in": scope_pids}
     async for u in db.units.find(unit_q, {"_id": 0}):
@@ -1550,7 +1789,7 @@ async def list_targets(project_id: Optional[str] = None,
 
 @api.post("/revenue-targets")
 async def upsert_target(payload: RevenueTargetCreate,
-                        user: User = Depends(require_roles("admin"))):
+                        user: User = Depends(require_roles("super_admin"))):
     payload.validate_period_key()
     if not await db.projects.find_one({"project_id": payload.project_id}):
         raise HTTPException(404, "Project not found")
@@ -1577,7 +1816,7 @@ async def upsert_target(payload: RevenueTargetCreate,
 
 @api.delete("/revenue-targets/{target_id}")
 async def delete_target(target_id: str,
-                        user: User = Depends(require_roles("admin"))):
+                        user: User = Depends(require_roles("super_admin"))):
     r = await db.revenue_targets.delete_one({"target_id": target_id})
     if r.deleted_count == 0:
         raise HTTPException(404, "Target not found")
@@ -1632,7 +1871,7 @@ async def list_expenses(project_id: Optional[str] = None,
     if scope is not None:
         if not project_id:
             q["project_id"] = {"$in": scope}
-    if user.role == "site_manager":
+    if user.role == "site_supervisor":
         # site managers see only their own + their projects
         q["project_id"] = q.get("project_id", {"$in": user.project_ids})
     docs = await db.expenses.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
@@ -1642,15 +1881,15 @@ async def list_expenses(project_id: Optional[str] = None,
 @api.post("/expenses")
 async def raise_expense(payload: ExpenseCreate,
                         user: User = Depends(require_roles(
-                            "site_manager", "admin"))):
-    if user.role == "site_manager" and payload.project_id not in user.project_ids:
+                            "site_supervisor", "super_admin", "process_admin"))):
+    if user.role == "site_supervisor" and payload.project_id not in user.project_ids:
         raise HTTPException(403, "You are not assigned to this project")
     e = Expense(**payload.model_dump(), raised_by=user.user_id)
     await db.expenses.insert_one(e.model_dump())
     await audit(user.user_id, "raise_expense", "expense", e.expense_id,
                 {"amount": payload.amount})
     # notify accounts users
-    async for acc in db.users.find({"role": "accounts", "is_active": True},
+    async for acc in db.users.find({"role": {"$in": ["accounts_rep", "accounts_head"]}, "is_active": True},
                                    {"_id": 0}):
         await notify(acc["user_id"], "expense_new",
                      f"New expense ₹{payload.amount:,.0f} pending Stage-1",
@@ -1660,7 +1899,7 @@ async def raise_expense(payload: ExpenseCreate,
 
 @api.post("/expenses/{expense_id}/stage1")
 async def stage1(expense_id: str, payload: ApprovalAction,
-                 user: User = Depends(require_roles("accounts", "admin"))):
+                 user: User = Depends(require_roles("accounts_head", "accounts_rep", "super_admin"))):
     exp = await db.expenses.find_one({"expense_id": expense_id}, {"_id": 0})
     if not exp:
         raise HTTPException(404, "Expense not found")
@@ -1687,7 +1926,7 @@ async def stage1(expense_id: str, payload: ApprovalAction,
     await db.expenses.update_one({"expense_id": expense_id}, {"$set": upd})
     await audit(user.user_id, "stage1", "expense", expense_id, upd)
     if upd["status"] == "stage1_approved":
-        async for m in db.users.find({"role": "management", "is_active": True},
+        async for m in db.users.find({"role": {"$in": ["super_admin", "process_admin", "crm_head"]}, "is_active": True},
                                      {"_id": 0}):
             await notify(m["user_id"], "expense_stage1",
                          f"Expense ₹{exp['amount']:,.0f} needs final approval",
@@ -1701,7 +1940,7 @@ async def stage1(expense_id: str, payload: ApprovalAction,
 
 @api.post("/expenses/{expense_id}/final")
 async def final_approve(expense_id: str, payload: ApprovalAction,
-                        user: User = Depends(require_roles("management", "admin"))):
+                        user: User = Depends(require_roles("super_admin", "process_admin", "crm_head"))):
     exp = await db.expenses.find_one({"expense_id": expense_id}, {"_id": 0})
     if not exp:
         raise HTTPException(404, "Expense not found")
@@ -1746,8 +1985,8 @@ async def list_stock_items(project_id: Optional[str] = None,
 @api.post("/stock/items")
 async def create_stock_item(payload: StockItemCreate,
                             user: User = Depends(require_roles(
-                                "admin", "site_manager"))):
-    if user.role == "site_manager" and payload.project_id not in user.project_ids:
+                                "super_admin", "process_admin", "site_supervisor"))):
+    if user.role == "site_supervisor" and payload.project_id not in user.project_ids:
         raise HTTPException(403, "Project not in your scope")
     it = StockItem(**payload.model_dump())
     await db.stock_items.insert_one(it.model_dump())
@@ -1757,11 +1996,11 @@ async def create_stock_item(payload: StockItemCreate,
 @api.post("/stock/movements")
 async def add_movement(payload: StockMovementCreate,
                        user: User = Depends(require_roles(
-                           "admin", "site_manager"))):
+                           "super_admin", "process_admin", "site_supervisor"))):
     item = await db.stock_items.find_one({"item_id": payload.item_id}, {"_id": 0})
     if not item:
         raise HTTPException(404, "Item not found")
-    if (user.role == "site_manager"
+    if (user.role == "site_supervisor"
             and item["project_id"] not in user.project_ids):
         raise HTTPException(403, "Project not in your scope")
     mv = StockMovement(item_id=payload.item_id,
@@ -1818,7 +2057,7 @@ class SettingsUpdate(BaseModel):
 
 @api.patch("/settings")
 async def update_settings(payload: SettingsUpdate,
-                          user: User = Depends(require_roles("admin"))):
+                          user: User = Depends(require_roles("super_admin"))):
     upd = {k: v for k, v in payload.model_dump().items() if v is not None}
     upd["updated_at"] = now()
     await db.settings.update_one({"_id": "singleton"}, {"$set": upd},
@@ -1853,7 +2092,7 @@ async def mark_all_read(user: User = Depends(get_current_user)):
 
 # ------------------------------------------------------ audit log ---------
 @api.get("/audit-logs")
-async def audit_logs(user: User = Depends(require_roles("admin"))):
+async def audit_logs(user: User = Depends(require_roles("super_admin"))):
     return await db.audit_logs.find({}, {"_id": 0}).sort(
         "created_at", -1).limit(500).to_list(500)
 
@@ -1912,7 +2151,7 @@ async def download_file(file_id: str,
 
 @api.post("/files/logo")
 async def upload_logo(file: UploadFile = File(...),
-                      user: User = Depends(require_roles("admin"))):
+                      user: User = Depends(require_roles("super_admin"))):
     data = await file.read()
     ext = (file.filename or "png").split(".")[-1].lower()
     file_id = new_id("file")
@@ -1940,7 +2179,7 @@ async def upload_logo(file: UploadFile = File(...),
 @api.post("/projects/{project_id}/image")
 async def upload_project_image(project_id: str,
                                file: UploadFile = File(...),
-                               user: User = Depends(require_roles("admin"))):
+                               user: User = Depends(require_roles("super_admin"))):
     proj = await db.projects.find_one({"project_id": project_id}, {"_id": 0})
     if not proj:
         raise HTTPException(404, "Project not found")
@@ -1984,7 +2223,10 @@ async def dashboard_summary(project_id: Optional[str] = None,
         exp_q["project_id"] = {"$in": scope}
         stock_q["project_id"] = {"$in": scope}
 
-    SOLD_STATES = ["sold", "crm_pending", "crm_scheduled", "accounts_tracking"]
+    SOLD_STATES = ["sale_confirmed", "post_sales_active", "fully_paid",
+                   "registration_pending", "registered",
+                   "possession_pending", "possession_completed",
+                   "booked_pending_sales_approval"]
     total = await db.units.count_documents(unit_q)
     sold = await db.units.count_documents(
         {**unit_q, "status": {"$in": SOLD_STATES}})
@@ -2145,7 +2387,7 @@ IMPORT_SHEETS = {
 
 @api.get("/excel/template/{kind}")
 async def excel_template(kind: str,
-                         user: User = Depends(require_roles("admin", "management"))):
+                         user: User = Depends(require_roles("super_admin", "process_admin"))):
     if kind not in IMPORT_SHEETS:
         raise HTTPException(400, "Unknown template kind")
     wb = Workbook()
@@ -2164,7 +2406,7 @@ async def excel_template(kind: str,
 
 @api.post("/excel/import/{kind}")
 async def excel_import(kind: str, file: UploadFile = File(...),
-                       user: User = Depends(require_roles("admin", "management"))):
+                       user: User = Depends(require_roles("super_admin", "process_admin"))):
     if kind not in IMPORT_SHEETS:
         raise HTTPException(400, "Unknown import kind")
     wb = load_workbook(io.BytesIO(await file.read()))
@@ -2331,11 +2573,11 @@ async def export_stock(project_id: Optional[str] = None,
 @api.get("/onboarding/status")
 async def onboarding_status(user: User = Depends(get_current_user)):
     proj_count = await db.projects.count_documents({})
-    acc_count = await db.users.count_documents({"role": "accounts", "is_active": True})
-    mgmt_count = await db.users.count_documents({"role": "management", "is_active": True})
-    sales_count = await db.users.count_documents({"role": "sales", "is_active": True})
-    crm_count = await db.users.count_documents({"role": "crm", "is_active": True})
-    sm_count = await db.users.count_documents({"role": "site_manager", "is_active": True})
+    acc_count = await db.users.count_documents({"role": {"$in": ["accounts_head", "accounts_rep"]}, "is_active": True})
+    mgmt_count = await db.users.count_documents({"role": {"$in": ["process_admin", "crm_head"]}, "is_active": True})
+    sales_count = await db.users.count_documents({"role": {"$in": ["sales_head", "sales_rep"]}, "is_active": True})
+    crm_count = await db.users.count_documents({"role": {"$in": ["crm_head", "post_sales_rep"]}, "is_active": True})
+    sm_count = await db.users.count_documents({"role": "site_supervisor", "is_active": True})
     units_count = await db.units.count_documents({})
     # Project has site_manager assigned
     proj_with_sm = await db.projects.count_documents(
@@ -2368,7 +2610,7 @@ async def onboarding_status(user: User = Depends(get_current_user)):
         "counts": {"projects": proj_count, "units": units_count,
                    "accounts": acc_count, "management": mgmt_count,
                    "sales": sales_count, "crm": crm_count,
-                   "site_manager": sm_count},
+                   "site_supervisor": sm_count},
     }
 
 
@@ -2397,7 +2639,7 @@ async def set_dash_config(payload: DashboardConfig,
 @api.post("/units/bulk-import")
 async def units_bulk_import(project_id: str = Form(...),
                             file: UploadFile = File(...),
-                            user: User = Depends(require_roles("admin", "management"))):
+                            user: User = Depends(require_roles("super_admin", "process_admin"))):
     """Import units for a project via .xlsx or .csv."""
     proj = await db.projects.find_one({"project_id": project_id}, {"_id": 0})
     if not proj:
@@ -2459,7 +2701,7 @@ async def units_bulk_import(project_id: str = Form(...),
 
 @api.get("/units/bulk-template")
 async def units_bulk_template(
-        user: User = Depends(require_roles("admin", "management"))):
+        user: User = Depends(require_roles("super_admin", "process_admin"))):
     headers = ["plot_number", "size", "facing", "price"]
     wb = Workbook()
     ws = wb.active
@@ -2508,7 +2750,7 @@ async def startup():
     if not existing:
         admin = User(
             email=ADMIN_EMAIL, name=ADMIN_NAME,
-            role="admin", project_ids=[],
+            role="super_admin", project_ids=[],
             password_hash=hash_pw(ADMIN_TEMP_PASSWORD),
             must_reset_password=True,
             is_active=True,

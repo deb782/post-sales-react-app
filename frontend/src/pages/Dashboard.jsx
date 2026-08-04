@@ -64,7 +64,7 @@ export default function Dashboard() {
   const setupDone = status?.done_count || 0;
   const setupTotal = status?.total_steps || 7;
   const setupPct = Math.round((setupDone / setupTotal) * 100);
-  const showSetup = status && !status.system_ready && user.role === "admin";
+  const showSetup = status && !status.system_ready && user.role === "super_admin";
 
   return (
     <div className="space-y-8" data-testid="dashboard-root">

@@ -122,7 +122,7 @@ export default function Expenses() {
     } catch (err) { toast.error(err?.response?.data?.detail || "Failed"); }
   };
 
-  const canRaise = can(user, "site_manager", "admin");
+  const canRaise = can(user, "site_supervisor", "super_admin", "process_admin");
   const canStage1 = can(user, "accounts", "admin");
   const canFinal = can(user, "management", "admin");
 

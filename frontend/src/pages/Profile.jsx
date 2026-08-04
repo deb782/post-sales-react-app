@@ -18,7 +18,7 @@ export default function Profile() {
 
   useEffect(() => {
     if (user) setForm({ name: user.name || "", phone: user.phone || "" });
-    if (user?.role === "site_manager") {
+    if (user?.role === "site_supervisor") {
       api.get("/projects").then(r => setProjects(r.data)).catch(() => {});
     }
   }, [user]);
@@ -192,7 +192,7 @@ export default function Profile() {
             <StatRow label="Reset pending" value={user.must_reset_password ? "Yes" : "No"} last />
           </div>
 
-          {user.role === "site_manager" && (
+          {user.role === "site_supervisor" && (
             <div className="bg-white border border-stone-200 rounded-xl p-6">
               <div className="text-xs uppercase tracking-widest text-stone-500 mb-4 flex items-center gap-1.5">
                 <Building2 className="w-3.5 h-3.5" /> My projects

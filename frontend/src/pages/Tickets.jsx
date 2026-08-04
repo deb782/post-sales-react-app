@@ -77,9 +77,9 @@ export default function Tickets() {
   };
 
   const canResolve = can(user, "admin", "management");
-  const canCreate = can(user, "admin", "management", "site_manager");
+  const canCreate = can(user, "super_admin", "process_admin", "crm_head", "site_supervisor");
 
-  const scopedProjects = user.role === "site_manager"
+  const scopedProjects = user.role === "site_supervisor"
     ? projects.filter(p => (user.project_ids || []).includes(p.project_id))
     : projects;
 

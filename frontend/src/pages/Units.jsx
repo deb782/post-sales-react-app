@@ -20,20 +20,36 @@ import { downloadExcel, downloadPdf } from "@/lib/exporters";
 
 const STATUS_STYLE = {
   available: "bg-stone-100 text-stone-700 border-stone-200",
-  sold: "bg-amber-100 text-amber-800 border-amber-200",
-  crm_pending: "bg-blue-100 text-blue-800 border-blue-200",
-  crm_scheduled: "bg-indigo-100 text-indigo-800 border-indigo-200",
-  accounts_tracking: "bg-emerald-100 text-emerald-800 border-emerald-200",
+  on_hold: "bg-slate-100 text-slate-700 border-slate-200",
+  temporarily_blocked: "bg-slate-100 text-slate-800 border-slate-200",
+  booking_in_progress: "bg-yellow-100 text-yellow-800 border-yellow-200",
+  booked_pending_sales_approval: "bg-orange-100 text-orange-800 border-orange-200",
+  sale_confirmed: "bg-amber-100 text-amber-800 border-amber-200",
+  post_sales_active: "bg-indigo-100 text-indigo-800 border-indigo-200",
+  fully_paid: "bg-emerald-100 text-emerald-800 border-emerald-200",
+  registration_pending: "bg-blue-100 text-blue-800 border-blue-200",
+  registered: "bg-teal-100 text-teal-800 border-teal-200",
+  possession_pending: "bg-cyan-100 text-cyan-800 border-cyan-200",
+  possession_completed: "bg-emerald-100 text-emerald-800 border-emerald-200",
   cancelled: "bg-rose-100 text-rose-800 border-rose-200",
+  available_for_resale: "bg-stone-100 text-stone-700 border-stone-200",
 };
 
 const STATUS_LABELS = {
   available: "Available",
-  sold: "Sold",
-  crm_pending: "CRM Pending",
-  crm_scheduled: "Scheduled",
-  accounts_tracking: "Tracking Payments",
+  on_hold: "On Hold",
+  temporarily_blocked: "Blocked",
+  booking_in_progress: "Booking",
+  booked_pending_sales_approval: "Pending Sales Approval",
+  sale_confirmed: "Sale Confirmed",
+  post_sales_active: "Post-Sales Active",
+  fully_paid: "Fully Paid",
+  registration_pending: "Registration Pending",
+  registered: "Registered",
+  possession_pending: "Possession Pending",
+  possession_completed: "Possession Done",
   cancelled: "Cancelled",
+  available_for_resale: "Available for Resale",
 };
 
 const FACING = ["North","East","South","West","North-East","North-West","South-East","South-West"];
@@ -350,7 +366,7 @@ export default function Units() {
                 <TableCell className="text-stone-600">{u.owner_name || "—"}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center gap-1 justify-end">
-                    {can(user, "admin", "sales", "management") && u.status === "available" && (
+                    {can(user, "super_admin", "sales_rep", "sales_head", "process_admin") && u.status === "available" && (
                       <Button size="sm" onClick={() => openSell(u)} className="bg-emerald-900 hover:bg-emerald-800" data-testid={`sell-unit-${u.plot_number}`}>
                         <HandCoins className="w-3.5 h-3.5 mr-1" /> Mark Sold
                       </Button>
@@ -358,7 +374,7 @@ export default function Units() {
                     {canSetup(user) && u.status === "available" && (
                       <Button size="icon" variant="ghost" onClick={() => startEdit(u)} data-testid={`edit-unit-${u.plot_number}`}><Pencil className="w-3.5 h-3.5" /></Button>
                     )}
-                    {canSetup(user) && ["crm_pending", "sold"].includes(u.status) && (
+                    {canSetup(user) && ["sale_confirmed", "booked_pending_sales_approval"].includes(u.status) && (
                       <Button size="sm" variant="outline" onClick={() => cancelSale(u)} className="text-rose-700"><X className="w-3 h-3 mr-1" /> Cancel</Button>
                     )}
                   </div>

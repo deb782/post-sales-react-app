@@ -10,19 +10,20 @@ import NotificationsBell from "@/components/NotificationsBell";
 import GlobalSearch from "@/components/GlobalSearch";
 
 const NAV = [
-  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["admin","management","accounts","sales","crm","site_manager"] },
-  { to: "/projects", label: "Projects", icon: Building2, roles: ["admin","management","accounts","sales","crm","site_manager"] },
-  { to: "/units", label: "Inventory", icon: Home, roles: ["admin","management","accounts","sales","crm","site_manager"] },
-  { to: "/sales", label: "Sales", icon: Handshake, roles: ["admin","management","sales"] },
-  { to: "/crm", label: "CRM", icon: HandCoins, roles: ["admin","management","crm","accounts"] },
-  { to: "/revenue", label: "Revenue", icon: Wallet, roles: ["admin","accounts","management"] },
-  { to: "/expenses", label: "Expenses", icon: Receipt, roles: ["admin","management","accounts","site_manager"] },
-  { to: "/stock", label: "Stock Book", icon: Boxes, roles: ["admin","management","site_manager"] },
-  { to: "/tickets", label: "Tickets", icon: TicketCheck, roles: ["admin","management","site_manager"] },
-  { to: "/users", label: "Users", icon: UsersIcon, roles: ["admin", "management"] },
-  { to: "/import", label: "Excel Import", icon: Upload, roles: ["admin","management"] },
-  { to: "/audit", label: "Audit Log", icon: ScrollText, roles: ["admin"] },
-  { to: "/settings", label: "Settings", icon: SettingsIcon, roles: ["admin","management"] },
+  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["super_admin","process_admin","crm_head","sales_head","accounts_head","sales_rep","post_sales_rep","accounts_rep","site_supervisor"] },
+  { to: "/projects", label: "Projects", icon: Building2, roles: ["super_admin","process_admin","crm_head","sales_head","accounts_head","sales_rep","post_sales_rep","accounts_rep","site_supervisor"] },
+  { to: "/units", label: "Inventory", icon: Home, roles: ["super_admin","process_admin","crm_head","sales_head","accounts_head","sales_rep","post_sales_rep","accounts_rep","site_supervisor"] },
+  { to: "/sales", label: "Sales", icon: Handshake, roles: ["super_admin","process_admin","sales_head","sales_rep"] },
+  { to: "/sales-approvals", label: "Sales Approvals", icon: TicketCheck, roles: ["super_admin","sales_head"] },
+  { to: "/crm", label: "CRM & Payments", icon: HandCoins, roles: ["super_admin","process_admin","crm_head","post_sales_rep","accounts_head","accounts_rep"] },
+  { to: "/revenue", label: "Revenue", icon: Wallet, roles: ["super_admin","process_admin","accounts_head","accounts_rep","crm_head"] },
+  { to: "/expenses", label: "Expenses", icon: Receipt, roles: ["super_admin","process_admin","crm_head","accounts_head","accounts_rep","site_supervisor"] },
+  { to: "/stock", label: "Stock Book", icon: Boxes, roles: ["super_admin","process_admin","crm_head","site_supervisor"] },
+  { to: "/tickets", label: "Tickets", icon: TicketCheck, roles: ["super_admin","process_admin","crm_head","site_supervisor"] },
+  { to: "/users", label: "Users", icon: UsersIcon, roles: ["super_admin","process_admin"] },
+  { to: "/import", label: "Excel Import", icon: Upload, roles: ["super_admin","process_admin"] },
+  { to: "/audit", label: "Audit Log", icon: ScrollText, roles: ["super_admin"] },
+  { to: "/settings", label: "Settings", icon: SettingsIcon, roles: ["super_admin","process_admin"] },
 ];
 
 export default function Layout() {

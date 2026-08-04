@@ -1,0 +1,39 @@
+{
+  "summary": "Wave 1 backend + frontend smoke — 20/20 backend pytest passed. Verified: 9-role Literal + user creation for all 8 non-admin roles; 2-step sale approval (rep books -> booked_pending_sales_approval; head approves -> sale_confirmed); sales_head/super_admin self-approve skips pending; reject clears owner fields + resets status to available; 3-step payment flow claim(post_sales_rep) -> verify(accounts_rep, reflected/not_reflected) -> approve(accounts_head) -> paid + Payment record created; partial when received<amount; unit rolls up to fully_paid; promise-to-pay preserves original due_date; RBAC (sales_rep 403 on sales-review, accounts_rep 403 on approve, process_admin 403 on create/delete/promote super_admin); UnitStatus Literal has all 14 states; /api/onboarding/status returns 7 steps + counts map (accounts/management/sales/crm/site_supervisor); regression auth (forgot-password, /auth/me, 5-fail lockout). Frontend smoke: login -> auto-redirect to onboarding (7 role tiles rendered, site_supervisor option in role dropdown) -> Skip -> dashboard renders sidebar with all 14 expected nav items including 'Sales Approvals' (super_admin only).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Login page first-time admin hint", "issue": "Copy still references 'System-seeded admin: sales@agrocorp.co.in' but the real seeded admin is deb@agrocorp.co.in per backend/.env — misleading for first-time users.", "selector": "login form footer text", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard", "issues": ["Recharts container throws 'width(-1) and height(-1)' warnings on first render — cosmetic but noisy."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test_iter13_wave1.py",
+    "/app/test_reports/pytest/iter13_results.xml"
+  ],
+  "action_items": [
+    "Update Login page copy to reference the correct seeded admin email (deb@agrocorp.co.in) or remove the specific email from the hint.",
+    "Known Wave 1 gap (per request): /sales-approvals route in Layout has no Route in App.js — clicking the sidebar link falls through to the '*' NavigateToDashboard rule, so the link silently redirects. Consider a placeholder page + banner ('Coming in Wave 2') to prevent confusion.",
+    "Suppress Recharts width/height warnings by ensuring parent has explicit min-height on Dashboard chart containers."
+  ],
+  "critical_code_review_comments": [
+    "server.py at 2781 lines — still exceeds the 700-line guideline and now hosts 9 roles, 14 unit statuses and 13 installment statuses; strongly recommend splitting into modules (auth, users, projects, units_sales, installments_payments, dashboard) before Wave 2 adds more workflow endpoints.",
+    "SOLD_STATES is redefined inline in 3 places (units/sell:1223, revenue:1678, dashboard/summary:2226) with slightly different tuples — extract as module-level constant to avoid drift.",
+    "@app.on_event('startup'/'shutdown') is deprecated — migrate to lifespan handler (pre-existing carry-over from iter12).",
+    "/api/users POST returns temp_password in the JSON body — fine for internal tool but ensure it is never logged; consider gating behind a query param and add a note in API docs.",
+    "invite_email_html/send_email fallback subject still says 'Vista Estates' (line 983, 1010) but branding is now 'Agrocorp Admin' — subject line will look wrong to invitees. Should read from SMTP_FROM_NAME env var.",
+    "Sales-review payload accepts action='return' but that branch neither changes status nor clears the review_note history — silent no-op except for notify. Confirm intended.",
+    "Onboarding.jsx renders TEAM_ROLES.slice(4) which is 3 tiles (sales_rep, post_sales_rep, accounts_rep) — total 7 team tiles as advertised, but Site Supervisor is only reachable via the role dropdown, not as a tile. Consider adding an 8th tile or clarifying via label."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test_iter13_wave1.py"],
+  "success_rate": {"backend": "100% (20/20)", "frontend": "100% smoke (login+onboarding+dashboard nav)"},
+  "test_credentials": "deb@agrocorp.co.in / after first test run password rotated to 'Agrocorp@2026#'. must_reset_password is now false and onboarding_completed=true on super_admin. If you need to re-run with must_reset=true, run /app/backend/scripts/reset_and_seed.py.",
+  "seed_data_creation": "Created 8 test users (test_{role}_<runtag>@example.com) and 1 project ('TEST_Proj_<runtag>', plots_land) + ~8 units + several installments/payments. These are TEST_-prefixed / example.com — safe to leave for regression; a wipe-and-reseed will remove them.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run pytest with -n 0 (project uses xdist by default; sequential is needed because tests share preview backend state). Set REACT_APP_BACKEND_URL env var explicitly. Super admin password has been rotated to Agrocorp@2026# and onboarding_completed=true. To retest onboarding UI, either manually reset the super_admin via reset_and_seed.py or hit /api/users/{super_id}/reset-password from another admin (there are now process_admin test users available). Sales-Approvals page component intentionally missing (Wave 1 scope gap).",
+  "rca of the issue": "No blocking issues found. Test scaffolding bugs (email TLD '.test' and 'plotting' project_type) were fixed in the test file — not production code."
+}

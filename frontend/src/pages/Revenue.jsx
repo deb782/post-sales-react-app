@@ -39,7 +39,7 @@ export default function Revenue() {
     ]);
     setSummary(s.data);
     setPayments(p.data);
-    setUnits(u.data.filter(x => ["sold","crm_pending","crm_scheduled","accounts_tracking"].includes(x.status)));
+    setUnits(u.data.filter(x => ["sale_confirmed","post_sales_active","fully_paid","registration_pending","registered","possession_pending","possession_completed"].includes(x.status)));
   };
   useEffect(() => { load(); }, [projectId]);
 

@@ -8,13 +8,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { Check, ChevronRight, UserPlus, Copy, ArrowRight, LayoutDashboard, Building2 } from "lucide-react";
 
-const TEAM_ROLES = ["management", "accounts", "sales", "crm"];
+const TEAM_ROLES = ["process_admin", "crm_head", "sales_head", "accounts_head",
+                    "sales_rep", "post_sales_rep", "accounts_rep"];
 
 export default function Onboarding() {
   const { user, refresh } = useAuth();
   const nav = useNavigate();
   const [status, setStatus] = useState(null);
-  const [form, setForm] = useState({ email: "", name: "", role: "management", phone: "" });
+  const [form, setForm] = useState({ email: "", name: "", role: "process_admin", phone: "" });
   const [lastInvite, setLastInvite] = useState(null);
   const [users, setUsers] = useState([]);
 
@@ -54,8 +55,15 @@ export default function Onboarding() {
 
   if (!status) return <div className="p-8 text-stone-500">Loading…</div>;
 
-  const teamDone = TEAM_ROLES.every(r => status.counts[r] > 0);
-  const invitedCount = users.filter(u => u.role !== "admin").length;
+  const roleCountKey = (r) => {
+    if (r === "process_admin" || r === "crm_head") return "management";
+    if (r === "sales_head" || r === "sales_rep") return "sales";
+    if (r === "accounts_head" || r === "accounts_rep") return "accounts";
+    if (r === "post_sales_rep") return "crm";
+    return r;
+  };
+  const teamDone = TEAM_ROLES.every(r => status.counts[roleCountKey(r)] > 0);
+  const invitedCount = users.filter(u => u.role !== "super_admin").length;
 
   return (
     <div className="min-h-screen bg-stone-50" data-testid="onboarding-root">
@@ -69,8 +77,13 @@ export default function Onboarding() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-8">
-          {TEAM_ROLES.map(r => (
-            <RoleTile key={r} role={r} count={status.counts[r] || 0} />
+          {TEAM_ROLES.slice(0, 4).map(r => (
+            <RoleTile key={r} role={r} count={status.counts[roleCountKey(r)] || 0} />
+          ))}
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-8">
+          {TEAM_ROLES.slice(4).map(r => (
+            <RoleTile key={r} role={r} count={status.counts[roleCountKey(r)] || 0} />
           ))}
         </div>
 
@@ -98,7 +111,7 @@ export default function Onboarding() {
                   {TEAM_ROLES.map(r => (
                     <SelectItem key={r} value={r} data-testid={`role-option-${r}`}>{ROLE_LABELS[r]}</SelectItem>
                   ))}
-                  <SelectItem value="site_manager" data-testid="role-option-site_manager">{ROLE_LABELS.site_manager}</SelectItem>
+                <SelectItem value="site_supervisor" data-testid="role-option-site_supervisor">{ROLE_LABELS.site_supervisor}</SelectItem>
                 </SelectContent>
               </Select>
             </Field>
@@ -107,8 +120,8 @@ export default function Onboarding() {
           <div className="mt-6 flex flex-wrap items-center gap-3 justify-between">
             <div className="text-xs text-stone-500">
               {teamDone
-                ? "All 4 core roles invited. You can invite more or move on."
-                : `Still needed: ${TEAM_ROLES.filter(r => !(status.counts[r] > 0)).map(r => ROLE_LABELS[r]).join(", ")}`}
+                ? "All core roles invited. You can invite more or move on."
+                : `Still needed: ${TEAM_ROLES.filter(r => !(status.counts[roleCountKey(r)] > 0)).map(r => ROLE_LABELS[r]).join(", ")}`}
             </div>
             <div className="flex gap-2">
               <Button onClick={invite} className="bg-emerald-900 hover:bg-emerald-800" data-testid="invite-user-btn">
