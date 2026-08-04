@@ -13,6 +13,7 @@ import os
 import re
 import csv
 import uuid
+import hmac
 import secrets
 import logging
 import smtplib
@@ -242,6 +243,7 @@ UnitStatus = Literal[
     "booked_pending_sales_approval", "sale_confirmed", "post_sales_active",
     "fully_paid", "registration_pending", "registered",
     "possession_pending", "possession_completed",
+    "cancellation_requested",
     "cancelled", "available_for_resale",
 ]
 
@@ -522,6 +524,105 @@ class Notification(BaseModel):
     link: Optional[str] = None
     is_read: bool = False
     created_at: str = Field(default_factory=now)
+
+
+# ------------------ Booking cancellation + refund workflow ---------------
+CancellationStatus = Literal[
+    "pending_sales_review", "pending_refund",
+    "refund_completed", "rejected",
+]
+
+
+class Cancellation(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    cancellation_id: str = Field(default_factory=lambda: new_id("cxl"))
+    unit_id: str
+    project_id: str
+    initiated_by: str
+    initiated_at: str = Field(default_factory=now)
+    reason: str
+    status: CancellationStatus = "pending_sales_review"
+    # Sales Head review
+    sales_reviewed_by: Optional[str] = None
+    sales_reviewed_at: Optional[str] = None
+    sales_review_note: str = ""
+    # Refund (recorded by Accounts Rep / Head)
+    amount_paid_to_date: float = 0
+    refund_amount: float = 0
+    refund_reference: str = ""
+    refund_mode: str = ""
+    refund_paid_by: Optional[str] = None
+    refund_paid_at: Optional[str] = None
+    refund_notes: str = ""
+
+
+class CancellationCreate(BaseModel):
+    reason: str
+
+
+class CancellationReview(BaseModel):
+    action: Literal["approve", "reject"]
+    note: str = ""
+
+
+class RefundRecord(BaseModel):
+    refund_reference: str = ""
+    refund_mode: Literal["cash", "cheque", "bank_transfer", "upi", "card", "other"] = "bank_transfer"
+    refund_notes: str = ""
+
+
+# ------------------ Site material request chain -------------------------
+MaterialRequestStatus = Literal[
+    "pending_crm_review", "pending_admin_review",
+    "pending_super_admin", "approved", "rejected",
+]
+
+
+class MaterialRequestItem(BaseModel):
+    name: str
+    quantity: float = Field(ge=0)
+    unit: str = "pcs"
+    notes: str = ""
+
+
+class MaterialRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    request_id: str = Field(default_factory=lambda: new_id("mrq"))
+    project_id: str
+    subject: str
+    items: List[MaterialRequestItem] = []
+    justification: str = ""
+    priority: Literal["low", "medium", "high", "urgent"] = "medium"
+    status: MaterialRequestStatus = "pending_crm_review"
+    requested_by: str
+    requested_at: str = Field(default_factory=now)
+    # CRM Head review
+    crm_reviewed_by: Optional[str] = None
+    crm_reviewed_at: Optional[str] = None
+    crm_note: str = ""
+    # Process Admin review
+    admin_reviewed_by: Optional[str] = None
+    admin_reviewed_at: Optional[str] = None
+    admin_note: str = ""
+    # Super Admin final
+    final_by: Optional[str] = None
+    final_at: Optional[str] = None
+    final_note: str = ""
+    rejection_reason: str = ""
+
+
+class MaterialRequestCreate(BaseModel):
+    project_id: str
+    subject: str
+    items: List[MaterialRequestItem]
+    justification: str = ""
+    priority: Literal["low", "medium", "high", "urgent"] = "medium"
+
+
+class MaterialReview(BaseModel):
+    action: Literal["approve", "reject", "return"]
+    note: str = ""
+
 
 
 PeriodType = Literal["monthly", "quarterly"]
@@ -1345,6 +1446,354 @@ async def cancel_sale(unit_id: str,
     await db.installments.delete_many({"unit_id": unit_id})
     await audit(user.user_id, "cancel_sale", "unit", unit_id, {})
     return {"ok": True}
+
+
+# ------------------------- booking cancellation workflow -----------------
+async def _sum_received_for_unit(unit_id: str) -> float:
+    total = 0.0
+    async for p in db.payments.find({"unit_id": unit_id}, {"_id": 0, "amount": 1}):
+        total += float(p.get("amount", 0) or 0)
+    return total
+
+
+@api.get("/cancellations")
+async def list_cancellations(status: Optional[str] = None,
+                             user: User = Depends(get_current_user)):
+    q: dict = {}
+    if status:
+        q["status"] = status
+    scope = user_scope_projects(user)
+    if scope is not None:
+        q["project_id"] = {"$in": scope}
+    return await db.cancellations.find(q, {"_id": 0}).sort(
+        "initiated_at", -1).to_list(500)
+
+
+@api.post("/units/{unit_id}/request-cancellation")
+async def request_cancellation(unit_id: str, payload: CancellationCreate,
+                               user: User = Depends(require_roles(
+                                   "super_admin", "process_admin",
+                                   "sales_head", "sales_rep",
+                                   "crm_head", "post_sales_rep"))):
+    unit = await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
+    if not unit:
+        raise HTTPException(404, "Unit not found")
+    ACTIVE_SOLD = ("booked_pending_sales_approval", "sale_confirmed",
+                   "post_sales_active", "fully_paid",
+                   "registration_pending", "registered",
+                   "possession_pending")
+    if unit["status"] not in ACTIVE_SOLD:
+        raise HTTPException(400, "Only active sold units can be cancelled")
+    existing = await db.cancellations.find_one(
+        {"unit_id": unit_id,
+         "status": {"$in": ["pending_sales_review", "pending_refund"]}},
+        {"_id": 0})
+    if existing:
+        raise HTTPException(400, "Cancellation already in progress for this unit")
+    paid = await _sum_received_for_unit(unit_id)
+    c = Cancellation(
+        unit_id=unit_id, project_id=unit["project_id"],
+        initiated_by=user.user_id, reason=payload.reason,
+        amount_paid_to_date=paid, refund_amount=paid,
+    )
+    await db.cancellations.insert_one(c.model_dump())
+    await db.units.update_one(
+        {"unit_id": unit_id},
+        {"$set": {"status": "cancellation_requested",
+                  "previous_status_before_cancellation": unit["status"]}})
+    await audit(user.user_id, "request_cancellation", "unit", unit_id,
+                {"cancellation_id": c.cancellation_id, "reason": payload.reason})
+    proj = await db.projects.find_one({"project_id": unit["project_id"]},
+                                      {"_id": 0}) or {}
+    msg = (f"Cancellation requested · Plot {unit['plot_number']} in "
+           f"{proj.get('name','')} · {unit.get('owner_name','')}")
+    async for u in db.users.find(
+            {"role": {"$in": ["super_admin", "sales_head"]},
+             "is_active": True}, {"_id": 0}):
+        await notify(u["user_id"], "cancellation_pending", msg,
+                     link=f"/cancellations")
+        send_email(u["email"], "Booking cancellation pending review",
+                   f"<p>{msg}</p><p>Reason: {payload.reason}</p>")
+    return c.model_dump()
+
+
+@api.post("/cancellations/{cancellation_id}/sales-review")
+async def cancellation_sales_review(cancellation_id: str, payload: CancellationReview,
+                                    user: User = Depends(require_roles(
+                                        "super_admin", "sales_head"))):
+    c = await db.cancellations.find_one({"cancellation_id": cancellation_id}, {"_id": 0})
+    if not c:
+        raise HTTPException(404, "Cancellation not found")
+    if c["status"] != "pending_sales_review":
+        raise HTTPException(400, "Cancellation is not pending sales review")
+    unit = await db.units.find_one({"unit_id": c["unit_id"]}, {"_id": 0})
+    if payload.action == "approve":
+        new_status = "pending_refund" if c["refund_amount"] > 0 else "refund_completed"
+        upd = {"status": new_status,
+               "sales_reviewed_by": user.user_id,
+               "sales_reviewed_at": now(),
+               "sales_review_note": payload.note}
+        await db.cancellations.update_one({"cancellation_id": cancellation_id},
+                                          {"$set": upd})
+        # unit → cancelled (refund handles resale flag)
+        if new_status == "refund_completed":
+            await db.units.update_one({"unit_id": c["unit_id"]},
+                                      {"$set": {"status": "available_for_resale",
+                                                "owner_name": None, "owner_contact": None,
+                                                "owner_email": None, "discount": 0,
+                                                "total_price": 0,
+                                                "payment_plan_template_id": None,
+                                                "sold_by": None, "sold_at": None}})
+        else:
+            await db.units.update_one({"unit_id": c["unit_id"]},
+                                      {"$set": {"status": "cancelled"}})
+        await audit(user.user_id, "approve_cancellation", "cancellation",
+                    cancellation_id, {"note": payload.note})
+        # notify accounts to process refund (if any)
+        if new_status == "pending_refund":
+            msg = (f"Refund pending · Plot {unit['plot_number']} · "
+                   f"₹{c['refund_amount']:,.0f}")
+            async for u in db.users.find(
+                    {"role": {"$in": ["super_admin", "accounts_head", "accounts_rep"]},
+                     "is_active": True}, {"_id": 0}):
+                await notify(u["user_id"], "refund_pending", msg,
+                             link="/cancellations")
+                send_email(u["email"], "Refund pending action", f"<p>{msg}</p>")
+    else:  # reject
+        upd = {"status": "rejected",
+               "sales_reviewed_by": user.user_id,
+               "sales_reviewed_at": now(),
+               "sales_review_note": payload.note}
+        await db.cancellations.update_one({"cancellation_id": cancellation_id},
+                                          {"$set": upd})
+        # restore unit to its previous status
+        prev = unit.get("previous_status_before_cancellation") or "sale_confirmed"
+        await db.units.update_one({"unit_id": c["unit_id"]},
+                                  {"$set": {"status": prev},
+                                   "$unset": {"previous_status_before_cancellation": ""}})
+        await audit(user.user_id, "reject_cancellation", "cancellation",
+                    cancellation_id, {"note": payload.note})
+        await notify(c["initiated_by"], "cancellation_rejected",
+                     f"Cancellation rejected for Plot {unit['plot_number']}. Reason: {payload.note}",
+                     link="/cancellations")
+    return await db.cancellations.find_one({"cancellation_id": cancellation_id},
+                                           {"_id": 0})
+
+
+@api.post("/cancellations/{cancellation_id}/refund")
+async def cancellation_record_refund(cancellation_id: str, payload: RefundRecord,
+                                     user: User = Depends(require_roles(
+                                         "super_admin", "accounts_head", "accounts_rep"))):
+    c = await db.cancellations.find_one({"cancellation_id": cancellation_id}, {"_id": 0})
+    if not c:
+        raise HTTPException(404, "Cancellation not found")
+    if c["status"] != "pending_refund":
+        raise HTTPException(400, "Cancellation is not awaiting refund")
+    upd = {"status": "refund_completed",
+           "refund_reference": payload.refund_reference,
+           "refund_mode": payload.refund_mode,
+           "refund_notes": payload.refund_notes,
+           "refund_paid_by": user.user_id,
+           "refund_paid_at": now()}
+    await db.cancellations.update_one({"cancellation_id": cancellation_id},
+                                      {"$set": upd})
+    # Unit → available_for_resale; wipe owner details
+    await db.units.update_one(
+        {"unit_id": c["unit_id"]},
+        {"$set": {"status": "available_for_resale",
+                  "owner_name": None, "owner_contact": None,
+                  "owner_email": None, "discount": 0, "total_price": 0,
+                  "payment_plan_template_id": None,
+                  "sold_by": None, "sold_at": None},
+         "$unset": {"previous_status_before_cancellation": ""}})
+    await audit(user.user_id, "record_refund", "cancellation",
+                cancellation_id, {"amount": c["refund_amount"],
+                                  "reference": payload.refund_reference})
+    unit = await db.units.find_one({"unit_id": c["unit_id"]}, {"_id": 0})
+    msg = (f"Refund completed · Plot {unit.get('plot_number','')} · "
+           f"₹{c['refund_amount']:,.0f}")
+    async for u in db.users.find(
+            {"role": {"$in": ["super_admin", "crm_head"]}, "is_active": True},
+            {"_id": 0}):
+        await notify(u["user_id"], "refund_completed", msg,
+                     link="/cancellations")
+    return await db.cancellations.find_one({"cancellation_id": cancellation_id},
+                                           {"_id": 0})
+
+
+# ------------------------- site material request chain ------------------
+@api.get("/material-requests")
+async def list_material_requests(status: Optional[str] = None,
+                                 project_id: Optional[str] = None,
+                                 user: User = Depends(get_current_user)):
+    q: dict = {}
+    if status:
+        q["status"] = status
+    if project_id:
+        q["project_id"] = project_id
+    # Site supervisors see only their own; others see per-project scope
+    if user.role == "site_supervisor":
+        q["requested_by"] = user.user_id
+        if user.project_ids:
+            q["project_id"] = q.get("project_id") or {"$in": user.project_ids}
+    return await db.material_requests.find(q, {"_id": 0}).sort(
+        "requested_at", -1).to_list(500)
+
+
+@api.post("/material-requests")
+async def create_material_request(payload: MaterialRequestCreate,
+                                  user: User = Depends(require_roles(
+                                      "super_admin", "process_admin",
+                                      "crm_head", "site_supervisor"))):
+    if user.role == "site_supervisor" and payload.project_id not in (user.project_ids or []):
+        raise HTTPException(403, "Project not in your scope")
+    if not payload.items:
+        raise HTTPException(400, "At least one material item is required")
+    r = MaterialRequest(**payload.model_dump(), requested_by=user.user_id)
+    await db.material_requests.insert_one(r.model_dump())
+    await audit(user.user_id, "create_material_request", "material_request",
+                r.request_id, {"subject": r.subject, "project_id": r.project_id})
+    proj = await db.projects.find_one({"project_id": r.project_id}, {"_id": 0}) or {}
+    msg = (f"Material request · {r.subject} · {proj.get('name','')} · "
+           f"Priority: {r.priority}")
+    async for u in db.users.find(
+            {"role": {"$in": ["super_admin", "crm_head"]}, "is_active": True},
+            {"_id": 0}):
+        await notify(u["user_id"], "material_request_new", msg,
+                     link="/material-requests")
+        send_email(u["email"], "New site material request",
+                   f"<p>{msg}</p><p>Justification: {r.justification or '—'}</p>")
+    return r.model_dump()
+
+
+@api.post("/material-requests/{request_id}/crm-review")
+async def material_crm_review(request_id: str, payload: MaterialReview,
+                              user: User = Depends(require_roles(
+                                  "super_admin", "crm_head"))):
+    r = await db.material_requests.find_one({"request_id": request_id}, {"_id": 0})
+    if not r:
+        raise HTTPException(404, "Request not found")
+    if r["status"] != "pending_crm_review":
+        raise HTTPException(400, "Request is not pending CRM review")
+    if payload.action == "approve":
+        upd = {"status": "pending_admin_review",
+               "crm_reviewed_by": user.user_id,
+               "crm_reviewed_at": now(),
+               "crm_note": payload.note}
+        await db.material_requests.update_one({"request_id": request_id}, {"$set": upd})
+        await audit(user.user_id, "material_crm_approve", "material_request",
+                    request_id, {"note": payload.note})
+        async for u in db.users.find(
+                {"role": {"$in": ["super_admin", "process_admin"]}, "is_active": True},
+                {"_id": 0}):
+            await notify(u["user_id"], "material_request_admin",
+                         f"Material request awaiting Process Admin review · {r['subject']}",
+                         link="/material-requests")
+    elif payload.action == "reject":
+        upd = {"status": "rejected",
+               "crm_reviewed_by": user.user_id,
+               "crm_reviewed_at": now(),
+               "crm_note": payload.note,
+               "rejection_reason": payload.note}
+        await db.material_requests.update_one({"request_id": request_id}, {"$set": upd})
+        await audit(user.user_id, "material_crm_reject", "material_request",
+                    request_id, {"note": payload.note})
+        await notify(r["requested_by"], "material_request_rejected",
+                     f"Your material request '{r['subject']}' was rejected. Reason: {payload.note}",
+                     link="/material-requests")
+    else:  # return
+        upd = {"crm_note": payload.note}
+        await db.material_requests.update_one({"request_id": request_id}, {"$set": upd})
+        await notify(r["requested_by"], "material_request_returned",
+                     f"Your material request '{r['subject']}' was returned. Note: {payload.note}",
+                     link="/material-requests")
+    return await db.material_requests.find_one({"request_id": request_id}, {"_id": 0})
+
+
+@api.post("/material-requests/{request_id}/admin-review")
+async def material_admin_review(request_id: str, payload: MaterialReview,
+                                user: User = Depends(require_roles(
+                                    "super_admin", "process_admin"))):
+    r = await db.material_requests.find_one({"request_id": request_id}, {"_id": 0})
+    if not r:
+        raise HTTPException(404, "Request not found")
+    if r["status"] != "pending_admin_review":
+        raise HTTPException(400, "Request is not pending admin review")
+    if payload.action == "approve":
+        upd = {"status": "pending_super_admin",
+               "admin_reviewed_by": user.user_id,
+               "admin_reviewed_at": now(),
+               "admin_note": payload.note}
+        await db.material_requests.update_one({"request_id": request_id}, {"$set": upd})
+        await audit(user.user_id, "material_admin_approve", "material_request",
+                    request_id, {"note": payload.note})
+        async for u in db.users.find(
+                {"role": "super_admin", "is_active": True}, {"_id": 0}):
+            await notify(u["user_id"], "material_request_super_admin",
+                         f"Material request needs final approval · {r['subject']}",
+                         link="/material-requests")
+            send_email(u["email"], "Material request — final approval",
+                       f"<p>Material request '{r['subject']}' has passed Process Admin review.</p>")
+    elif payload.action == "reject":
+        upd = {"status": "rejected",
+               "admin_reviewed_by": user.user_id,
+               "admin_reviewed_at": now(),
+               "admin_note": payload.note,
+               "rejection_reason": payload.note}
+        await db.material_requests.update_one({"request_id": request_id}, {"$set": upd})
+        await audit(user.user_id, "material_admin_reject", "material_request",
+                    request_id, {"note": payload.note})
+        await notify(r["requested_by"], "material_request_rejected",
+                     f"Your material request '{r['subject']}' was rejected by admin. Reason: {payload.note}",
+                     link="/material-requests")
+    else:  # return
+        upd = {"status": "pending_crm_review",
+               "admin_note": payload.note}
+        await db.material_requests.update_one({"request_id": request_id}, {"$set": upd})
+        await notify(r.get("crm_reviewed_by") or r["requested_by"],
+                     "material_request_returned",
+                     f"Material request '{r['subject']}' returned by admin. Note: {payload.note}",
+                     link="/material-requests")
+    return await db.material_requests.find_one({"request_id": request_id}, {"_id": 0})
+
+
+@api.post("/material-requests/{request_id}/final")
+async def material_final(request_id: str, payload: MaterialReview,
+                         user: User = Depends(require_roles("super_admin"))):
+    r = await db.material_requests.find_one({"request_id": request_id}, {"_id": 0})
+    if not r:
+        raise HTTPException(404, "Request not found")
+    if r["status"] != "pending_super_admin":
+        raise HTTPException(400, "Request is not pending super admin review")
+    if payload.action == "approve":
+        upd = {"status": "approved",
+               "final_by": user.user_id,
+               "final_at": now(),
+               "final_note": payload.note}
+        await db.material_requests.update_one({"request_id": request_id}, {"$set": upd})
+        await audit(user.user_id, "material_final_approve", "material_request",
+                    request_id, {"note": payload.note})
+        # notify supervisor + crm head
+        await notify(r["requested_by"], "material_request_approved",
+                     f"Your material request '{r['subject']}' is APPROVED.",
+                     link="/material-requests")
+        if r.get("crm_reviewed_by"):
+            await notify(r["crm_reviewed_by"], "material_request_approved",
+                         f"Material request '{r['subject']}' approved by Super Admin.",
+                         link="/material-requests")
+    else:  # reject (return handled by admin stage only)
+        upd = {"status": "rejected",
+               "final_by": user.user_id,
+               "final_at": now(),
+               "final_note": payload.note,
+               "rejection_reason": payload.note}
+        await db.material_requests.update_one({"request_id": request_id}, {"$set": upd})
+        await audit(user.user_id, "material_final_reject", "material_request",
+                    request_id, {"note": payload.note})
+        await notify(r["requested_by"], "material_request_rejected",
+                     f"Your material request '{r['subject']}' was rejected. Reason: {payload.note}",
+                     link="/material-requests")
+    return await db.material_requests.find_one({"request_id": request_id}, {"_id": 0})
 
 
 # ------------------------------------- payment plan templates -------------
@@ -2714,6 +3163,132 @@ async def units_bulk_template(
     return StreamingResponse(
         buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="units_template.xlsx"'})
+
+
+# ------------------------------------------------------ reminder engine ---
+WEBHOOK_CRON_SECRET = os.environ.get("WEBHOOK_CRON_SECRET", "")
+
+# Days from due_date at which a reminder should be sent.
+# Negative = before due (T-2), 0 = day-of, positive = after (T+1, T+3, T+7)
+REMINDER_OFFSETS = [-2, 0, 1, 3, 7]
+
+REMINDABLE_STATUSES = ("upcoming", "due_soon", "due_today",
+                       "overdue", "promise_to_pay",
+                       "not_reflected", "partial")
+
+
+async def _run_reminders() -> dict:
+    """Scan installments and fire reminders at T-2/T-day/T+1/T+3/T+7.
+
+    Reminders are de-duplicated per (installment, offset) using
+    `reminder_log` so the cron is idempotent even on manual re-runs.
+    """
+    today = datetime.now(timezone.utc).date()
+    sent = 0
+    scanned = 0
+    # Preload post-sales + accounts team once
+    team = []
+    async for u in db.users.find(
+            {"role": {"$in": ["super_admin", "post_sales_rep",
+                              "accounts_head", "accounts_rep",
+                              "crm_head"]},
+             "is_active": True},
+            {"_id": 0, "user_id": 1, "email": 1, "name": 1}):
+        team.append(u)
+
+    async for inst in db.installments.find(
+            {"status": {"$in": list(REMINDABLE_STATUSES)}}, {"_id": 0}):
+        scanned += 1
+        try:
+            due = datetime.fromisoformat(
+                inst["due_date"].replace("Z", "+00:00")).date()
+        except Exception:
+            continue
+        delta = (today - due).days
+        if delta not in REMINDER_OFFSETS:
+            continue
+        # Idempotency guard
+        log_id = f"rem:{inst['installment_id']}:{delta}"
+        exists = await db.reminder_log.find_one({"_id": log_id})
+        if exists:
+            continue
+        unit = await db.units.find_one({"unit_id": inst["unit_id"]}, {"_id": 0}) or {}
+        proj = await db.projects.find_one({"project_id": inst["project_id"]}, {"_id": 0}) or {}
+        # Human-readable label for the offset
+        if delta < 0:
+            hdr = f"Due in {abs(delta)} days"
+        elif delta == 0:
+            hdr = "Due today"
+        else:
+            hdr = f"Overdue by {delta} days"
+        msg = (f"{hdr} · Plot {unit.get('plot_number','?')} · "
+               f"{proj.get('name','')} · {unit.get('owner_name','')} · "
+               f"₹{inst['amount']:,.0f} ({inst.get('stage_name','installment')})")
+        # In-app notification to team
+        for u in team:
+            await notify(u["user_id"], "payment_reminder", msg,
+                         link=f"/crm/{inst['unit_id']}")
+        # Email to team
+        subj = f"[Reminder] {hdr} — Plot {unit.get('plot_number','?')} — {proj.get('name','')}"
+        html = (f"<p>{msg}</p>"
+                f"<p>Original due date: <b>{inst['due_date'][:10]}</b><br/>"
+                f"Status: <b>{inst.get('status','')}</b></p>")
+        for u in team:
+            send_email(u["email"], subj, html)
+        # Email to customer at T-2, T-day, T+3, T+7 (skip T+1 to reduce noise)
+        cust_email = unit.get("owner_email")
+        if cust_email and delta in (-2, 0, 3, 7):
+            cust_html = (
+                f"<p>Dear {unit.get('owner_name','')},</p>"
+                f"<p>This is a friendly reminder regarding your installment "
+                f"for Plot <b>{unit.get('plot_number','')}</b> at "
+                f"<b>{proj.get('name','')}</b>.</p>"
+                f"<p>Amount: <b>₹{inst['amount']:,.0f}</b> "
+                f"({inst.get('stage_name','installment')})<br/>"
+                f"Due date: <b>{inst['due_date'][:10]}</b><br/>"
+                f"Status: <b>{hdr}</b></p>"
+                f"<p>Please contact your relationship manager if you have any questions.</p>")
+            send_email(cust_email, subj, cust_html)
+        await db.reminder_log.insert_one({
+            "_id": log_id,
+            "installment_id": inst["installment_id"],
+            "unit_id": inst["unit_id"],
+            "offset": delta,
+            "sent_at": now(),
+            "message": msg,
+        })
+        sent += 1
+    return {"scanned": scanned, "reminders_sent": sent, "run_at": now()}
+
+
+async def _cron_authorized(authorization: Optional[str]) -> None:
+    if not WEBHOOK_CRON_SECRET:
+        raise HTTPException(500, "Cron secret not configured")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "Missing bearer token")
+    token = authorization.split(" ", 1)[1]
+    if not hmac.compare_digest(token, WEBHOOK_CRON_SECRET):
+        raise HTTPException(401, "Invalid cron token")
+
+
+@api.post("/cron/reminders")
+async def cron_reminders(request: Request,
+                         authorization: Optional[str] = Header(None)):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    await _cron_authorized(authorization)
+    # Attempt to read run_id for logging; do not fail if body is empty.
+    run_id = request.headers.get("X-Webhook-Id") or new_id("run")
+    import asyncio as _asyncio
+    _asyncio.create_task(_run_reminders())
+    return {"accepted": True, "run_id": run_id}
+
+
+@api.post("/cron/reminders/run-now")
+async def cron_reminders_debug(user: User = Depends(require_roles("super_admin"))):
+    """Manual trigger — Super Admin only. Useful for verification."""
+    result = await _run_reminders()
+    await audit(user.user_id, "run_reminders", "cron", "reminders", result)
+    return result
 
 
 # ------------------------------------------------------ mount -------------

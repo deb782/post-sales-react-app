@@ -11,8 +11,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
-import { HandCoins, Search } from "lucide-react";
+import { HandCoins, Search, Ban } from "lucide-react";
 import { toast } from "sonner";
+import { Textarea } from "@/components/ui/textarea";
 
 const fmt = (n = 0) => "₹" + Math.round(n).toLocaleString("en-IN");
 
@@ -24,6 +25,8 @@ export default function Sales() {
   const [q, setQ] = useState("");
   const [sellFor, setSellFor] = useState(null);
   const [sell, setSell] = useState({ owner_name: "", owner_contact: "", owner_email: "", discount: 0, total_price: 0, payment_plan_template_id: "" });
+  const [cancelFor, setCancelFor] = useState(null);
+  const [cancelReason, setCancelReason] = useState("");
 
   const load = async () => {
     const params = projectId ? { project_id: projectId } : {};
@@ -67,7 +70,17 @@ export default function Sales() {
     } catch (e) { toast.error(apiError(e)); }
   };
 
-  const sold = units.filter(u => ["booked_pending_sales_approval","sale_confirmed","post_sales_active","fully_paid","registration_pending","registered","possession_pending","possession_completed"].includes(u.status));
+  const sold = units.filter(u => ["booked_pending_sales_approval","sale_confirmed","post_sales_active","fully_paid","registration_pending","registered","possession_pending","possession_completed","cancellation_requested"].includes(u.status));
+
+  const submitCancellation = async () => {
+    if (!cancelReason.trim()) return toast.error("Reason is required");
+    try {
+      await api.post(`/units/${cancelFor.unit_id}/request-cancellation`, { reason: cancelReason });
+      toast.success("Cancellation request submitted for Sales Head review");
+      setCancelFor(null); setCancelReason("");
+      load();
+    } catch (e) { toast.error(apiError(e)); }
+  };
 
   return (
     <div className="space-y-6" data-testid="sales-root">
@@ -146,9 +159,16 @@ export default function Sales() {
                 <TableCell className="text-stone-600">{projMap[u.project_id] || "—"}</TableCell>
                 <TableCell>{u.owner_name || "—"}</TableCell>
                 <TableCell>{fmt(u.total_price || u.price || 0)}</TableCell>
-                <TableCell><span className="text-xs px-2 py-0.5 rounded-full border bg-amber-50 border-amber-200 text-amber-800">{u.status.replace("_", " ")}</span></TableCell>
+                <TableCell><span className="text-xs px-2 py-0.5 rounded-full border bg-amber-50 border-amber-200 text-amber-800">{u.status.replace(/_/g," ")}</span></TableCell>
                 <TableCell className="text-right">
-                  <Button size="sm" variant="ghost" onClick={() => nav(`/crm/${u.unit_id}`)}>View in CRM →</Button>
+                  <div className="flex gap-1 justify-end">
+                    {u.status !== "cancellation_requested" && u.status !== "possession_completed" && (
+                      <Button size="sm" variant="ghost" className="text-rose-700 hover:text-rose-800" onClick={() => setCancelFor(u)} data-testid={`req-cancel-${u.plot_number}`}>
+                        <Ban className="w-3.5 h-3.5 mr-1" /> Cancel
+                      </Button>
+                    )}
+                    <Button size="sm" variant="ghost" onClick={() => nav(`/crm/${u.unit_id}`)}>View in CRM →</Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
@@ -158,6 +178,27 @@ export default function Sales() {
           </TableBody>
         </Table>
       </div>
+
+      <Dialog open={!!cancelFor} onOpenChange={(o) => !o && setCancelFor(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Request cancellation · Plot {cancelFor?.plot_number}</DialogTitle></DialogHeader>
+          <div className="space-y-3 text-sm">
+            <div className="text-stone-600">Owner: <b className="text-stone-900">{cancelFor?.owner_name}</b></div>
+            <div className="text-xs text-stone-500">
+              This will move the plot to <b>Cancellation requested</b> until a Sales Head reviews it.
+              If approved, Accounts will refund the amount received to date in full.
+            </div>
+            <div>
+              <label className="text-xs uppercase tracking-widest text-stone-500">Reason *</label>
+              <Textarea rows={3} className="mt-1" value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} placeholder="Customer request, non-payment, financing failed…" data-testid="cancel-reason-input" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCancelFor(null)}>Back</Button>
+            <Button className="bg-rose-700 hover:bg-rose-800" onClick={submitCancellation} disabled={!cancelReason.trim()} data-testid="cancel-submit-btn">Submit request</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!sellFor} onOpenChange={(o) => !o && setSellFor(null)}>
         <DialogContent className="max-w-lg">

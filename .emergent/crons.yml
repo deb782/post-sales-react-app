@@ -1,0 +1,9 @@
+crons:
+  - name: payment-reminders
+    description: "Daily 08:00 IST scan of installments, fires T-2/T-day/T+1/T+3/T+7 email + in-app reminders"
+    cron: "0 8 * * *"
+    timezone: "Asia/Kolkata"
+    endpoint: "{{BASE_URL}}/api/cron/reminders"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true

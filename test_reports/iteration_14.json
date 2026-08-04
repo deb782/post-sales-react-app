@@ -1,0 +1,44 @@
+{
+  "summary": "Wave 2 backend + frontend smoke tests. Booking cancellation + refund, site material request 4-stage chain, and reminder-engine cron endpoints all pass. 24/24 pytest tests green. Frontend: sidebar entries, /cancellations and /material-requests pages, cancel button + dialog on Sales page, and MR create dialog all render and wire correctly.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/units/{unit_id}", "issue": "No single-unit GET endpoint exists; tests had to filter from /api/units list. Not a bug per se, but adding one would simplify consumers."},
+      {"endpoint": "/api/notifications", "issue": "Hard-coded limit=50 combined with high notification volume for super_admin makes it possible for older reminders to age out; consider a filter-by-kind query param."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "DialogContent (cancel + material-request dialogs)", "issues": ["Radix warning: Missing Description or aria-describedby for DialogContent — accessibility gap."]},
+      {"screen": "Dashboard", "issues": ["Recharts warning: width(-1)/height(-1) for chart containers — chart container mount race, cosmetic."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test_iter14_wave2.py",
+    "/app/test_reports/pytest/iter14_wave2.xml"
+  ],
+  "action_items": [
+    "(Optional) Add GET /api/units/{unit_id} single-unit endpoint for direct fetch.",
+    "(Optional) Add aria-describedby on cancel/MR/refund DialogContents to silence Radix a11y warning.",
+    "(Optional) Add filter-by-kind query param on /api/notifications for large accounts."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 3355 lines — well beyond the 700-line guideline; hard to maintain. Recommend splitting into routers (cancellations, material_requests, cron, notifications, installments).",
+    "_run_reminders builds `team` and fires N notifications and N emails sequentially inside async loop — for large user bases + many installments this can be slow. Consider bulk insert for notifications and batching email dispatch.",
+    "iter13 test 'test_all_14_statuses_in_source' asserts 14 UnitStatus literals but Wave 2 introduced 'cancellation_requested' bringing total to 15. Iter13 test is now stale; should be updated by main agent (kept out-of-scope here since Wave 1 file).",
+    "notify() stores field as 'kind' but README/tests may expect 'type' — worth documenting/aligning in an API contract.",
+    "Reminder loop iterates all reminable installments and computes offset per call — for scale, an index on due_date + status is worthwhile."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test_iter14_wave2.py (new)"
+  ],
+  "success_rate": {"backend": "100% (24/24)", "frontend": "100% smoke (5/5 checks)"},
+  "test_credentials": "deb@agrocorp.co.in / Agrocorp@2026# (post-reset). WEBHOOK_CRON_SECRET read from /app/backend/.env.",
+  "seed_data_creation": "Created test project TEST_W2_<runtag>, 8 role users (w2_<role>_<runtag>@example.com), and multiple sold + cancelled + material-request records. Site supervisor assigned to test project via PATCH /users/{id}.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend Wave-2 suite lives at backend_test_iter14_wave2.py. Notifications payload uses field 'kind' (not 'type'). No single-unit GET endpoint — use list + filter. iter13_wave1 test 'test_all_14_statuses_in_source' will FAIL after Wave 2 (expected 14, actual 15) — main agent should update expected set to include 'cancellation_requested'. Idempotency of reminder cron verified via reminder_log dedupe.",
+  "rca_of_the_issue": "N/A — all Wave 2 flows behave as specified. Two initial test-run failures were fixture bugs in my test code (using non-existent GET /units/{id} and wrong 'type' field name) — both fixed."
+}

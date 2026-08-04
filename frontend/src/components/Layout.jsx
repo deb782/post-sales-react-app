@@ -5,6 +5,7 @@ import {
   LayoutDashboard, Building2, Home, Wallet, Receipt, Boxes,
   Users as UsersIcon, Upload, Settings as SettingsIcon,
   ScrollText, LogOut, TicketCheck, HandCoins, Handshake,
+  Ban, Package,
 } from "lucide-react";
 import NotificationsBell from "@/components/NotificationsBell";
 import GlobalSearch from "@/components/GlobalSearch";
@@ -15,6 +16,8 @@ const NAV = [
   { to: "/units", label: "Inventory", icon: Home, roles: ["super_admin","process_admin","crm_head","sales_head","accounts_head","sales_rep","post_sales_rep","accounts_rep","site_supervisor"] },
   { to: "/sales", label: "Sales", icon: Handshake, roles: ["super_admin","process_admin","sales_head","sales_rep"] },
   { to: "/sales-approvals", label: "Sales Approvals", icon: TicketCheck, roles: ["super_admin","sales_head"] },
+  { to: "/cancellations", label: "Cancellations", icon: Ban, roles: ["super_admin","process_admin","sales_head","sales_rep","crm_head","post_sales_rep","accounts_head","accounts_rep"] },
+  { to: "/material-requests", label: "Material Requests", icon: Package, roles: ["super_admin","process_admin","crm_head","site_supervisor"] },
   { to: "/crm", label: "CRM & Payments", icon: HandCoins, roles: ["super_admin","process_admin","crm_head","post_sales_rep","accounts_head","accounts_rep"] },
   { to: "/revenue", label: "Revenue", icon: Wallet, roles: ["super_admin","process_admin","accounts_head","accounts_rep","crm_head"] },
   { to: "/expenses", label: "Expenses", icon: Receipt, roles: ["super_admin","process_admin","crm_head","accounts_head","accounts_rep","site_supervisor"] },
