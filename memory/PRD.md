@@ -21,12 +21,16 @@ Core rule: Process Admin prepares, Super Admin approves. No one approves their o
 - **/sales-approvals page** — Sales Head approval queue with approve/reject/return + note
 - DB wiped and reseeded with deb@agrocorp.co.in as Super Admin
 
-## Backlog (Waves 2–4)
-### P0
-- Reminder engine via `.emergent/crons.yml` (T-2, T-day, T+1/3/7)
-- Booking cancellation + refund workflow
-- Site material request chain: Site Supervisor → CRM Head → Process Admin → Super Admin
+## Wave 2 (delivered Feb 2026, iter14 24/24 PASS)
+- **Booking cancellation + refund workflow** (`/cancellations` page): Sales rep/CRM raises → Sales Head reviews → Accounts records refund (plain refund = amount paid, no deductions) → unit auto-flips to `available_for_resale`
+- **Site material request chain** (`/material-requests` page): Site Supervisor / CRM Head → CRM Head review → Process Admin review → Super Admin approves; stock is logged manually, NOT auto-decremented
+- **Reminder engine** — `.emergent/crons.yml` triggers `POST /api/cron/reminders` daily 08:00 IST; fires at T-2, T-day, T+1, T+3, T+7 to team (in-app + email) and customer (email at T-2/T-day/T+3/T+7); idempotent via `reminder_log` collection
+- **New status**: `cancellation_requested` → **15 plot statuses**
+- **Cancel button** added to sold units in Sales page
+- Sidebar entries: **Cancellations**, **Material Requests**
+- `WEBHOOK_CRON_SECRET` in `backend/.env`
 
+## Backlog (Waves 3–4)
 ### P1
 - Customer document vault (KYC, agreements, receipts)
 - Reports pack (aging, collection, outstanding, sales performance)
@@ -39,7 +43,8 @@ Core rule: Process Admin prepares, Super Admin approves. No one approves their o
 - Customer communication timeline (calls, emails, WhatsApp, meetings)
 - Full site procurement flow (quotation → PO → payment → receipt)
 - 2FA on Profile page
-- Server.py modularization (~2800 lines) into feature routers
+- server.py modularization (now ~3350 lines) into feature routers
+- WhatsApp reminder channel (Twilio) — additive to current email + in-app
 
 ## Env config
 `backend/.env`:
@@ -54,5 +59,6 @@ Code defaults match. Kubernetes-safe.
 - Production: https://property-ops-60.emergent.host (redeploy needed to publish Wave 1)
 
 ## Testing baseline
+- iter14 (Wave 2): `/app/test_reports/iteration_14.json` — **24/24 backend + 5/5 frontend smoke PASS**
 - iter13 (Wave 1): `/app/test_reports/iteration_13.json` — **20/20 backend + full frontend smoke PASS**
 - Previous: iter9 (v2 baseline), iter10 (users mgmt), iter11 (lockout), iter12 (self-heal seed)

@@ -393,14 +393,14 @@ class TestOnboarding:
 
 
 class TestUnitStatusLiteral:
-    def test_all_14_statuses_in_source(self):
-        # code introspection — Wave 1 promises Literal has all 14
+    def test_all_15_statuses_in_source(self):
+        # Wave 2 added 'cancellation_requested' → 15 statuses total.
         import server  # noqa
-        # server is /app/backend/server.py; import from path
         expected = {"available", "on_hold", "temporarily_blocked", "booking_in_progress",
                     "booked_pending_sales_approval", "sale_confirmed", "post_sales_active",
                     "fully_paid", "registration_pending", "registered",
-                    "possession_pending", "possession_completed", "cancelled",
+                    "possession_pending", "possession_completed",
+                    "cancellation_requested", "cancelled",
                     "available_for_resale"}
         actual = set(server.UnitStatus.__args__)
         assert expected == actual
