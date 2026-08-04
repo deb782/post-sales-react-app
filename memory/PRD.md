@@ -1,57 +1,58 @@
-# Agrocorp Admin — PRD
+# Agrocorp Admin — PRD (v3)
 
-## Original problem statement
-A web-based internal dashboard for a real estate company to manage
-multiple projects (inventory, revenue, expenses, stock).
+## Original problem
+Real-estate post-sales and site-operations management system: booking lifecycle, payment tracking, customer follow-ups, site inventory, role-based approvals.
 
-## Personas & roles (v2 — 6 roles)
-Hierarchy: **Admin → Management → Accounts → Sales → CRM → Site Manager**
+## Role hierarchy (v3 — 9 roles, 2-tier)
+- **Level 1**: super_admin, process_admin
+- **Level 2 (Heads)**: crm_head, sales_head, accounts_head
+- **Level 3 (Reps)**: sales_rep, post_sales_rep, accounts_rep
+- **Level 4**: site_supervisor (per-project)
 
-| Role | Scope | Responsibilities |
-|---|---|---|
-| Admin | Global | Full setup, user invites, delete projects |
-| Management | Global | Setup + admin-level access minus user deletes |
-| Accounts | Global | Confirm payments reflected, expense approvals |
-| Sales | Global | Book plots, capture buyer + total price + template |
-| CRM | Global | Build/edit payment schedule, mark initiated |
-| Site Manager | Per-project | Site expenses, stock book, raise tickets |
+Core rule: Process Admin prepares, Super Admin approves. No one approves their own submissions.
 
-## Product surface
-- **Branding**: "Agrocorp Admin" · logo seeded from client asset.
-- **First-login (admin)**: Password reset → Onboarding wizard "Build your team" (invite Mgmt+Accounts+Sales+CRM) → Fork to "Add project" or "Skip to dashboard".
-- **Dashboard**: KPI totals · 7-step setup tracker · Revenue overview card with project dropdown · Per-project status strip · Inventory & expense charts · Ticket count tile.
-- **Projects**: Only 2 types (Residential, Plots/Land). Simplified form (no target_revenue, no description). Inline site-manager assignment (existing or invite new). Rich cards showing PM, units, receipts, tickets.
-- **Inventory / Units**: Fields `plot_number, size, facing, price, plcs[{label,amount}]`. Bulk .xlsx/.csv import with 4-column template.
-- **Payment plan templates** (Settings): Admin CRUD; stages `{name, percent, days_from_start}`, must sum to 100%.
-- **Sales workflow**: `/sales` page — Sales books plot → `crm_pending`, notifies Admin/Accounts/CRM (email + in-app).
-- **CRM workflow**: `/crm/{unit_id}` — apply template → schedule installments → mark "initiated" → status `accounts_tracking`.
-- **Accounts confirmation**: Accounts clicks "Confirm received" per installment → status `reflected`, creates payment record.
-- **Tickets**: `/tickets` — Site Manager raises inventory disputes → Admin/Management resolve.
+## Wave 1 (delivered Feb 2026, iter13 20/20 PASS)
+- 9-role hierarchy + RBAC
+- **Sale approval 2-step**: Sales Rep drafts → `booked_pending_sales_approval` → Sales Head reviews → `sale_confirmed`
+- **Payment verification 3-step**: Post-Sales `claim` → Accounts Rep `verify` → Accounts Head `approve`
+- **Promise-to-Pay** on installments (original due date preserved)
+- **14 plot statuses** (available → possession_completed → available_for_resale)
+- **13 installment statuses** including partial, waived, rescheduled
+- **/sales-approvals page** — Sales Head approval queue with approve/reject/return + note
+- DB wiped and reseeded with deb@agrocorp.co.in as Super Admin
 
-## Data model deltas from v1
-- Roles: added `sales`, `crm`.
-- `Project`: dropped `target_revenue`, `description`; added `site_manager_id`; types restricted to residential + plots_land.
-- `Unit`: replaced `unit_type_id/unit_number/attributes/reserved_*` with `plot_number/size/facing/plcs/total_price/owner_*/discount/payment_plan_template_id/schedule_*` and pipeline status enum.
-- Dropped collection: `unit_types`.
-- New collections: `payment_templates`, `installments`, `tickets`.
+## Backlog (Waves 2–4)
+### P0
+- Reminder engine via `.emergent/crons.yml` (T-2, T-day, T+1/3/7)
+- Booking cancellation + refund workflow
+- Site material request chain: Site Supervisor → CRM Head → Process Admin → Super Admin
 
-## Testing status (Feb 2026)
-- Iter9 (v2 rework): `/app/backend/tests/backend_test_iter9.py` — **22/22 PASS**.
-- Iter10 (Users mgmt + Profile): `/app/backend/tests/backend_test_iter10.py` — **18/18 PASS**.
-- Last test reports: `/app/test_reports/iteration_9.json` and `iteration_10.json` — `retest_needed: false`.
+### P1
+- Customer document vault (KYC, agreements, receipts)
+- Reports pack (aging, collection, outstanding, sales performance)
+- Escalation SLAs with auto-notify
+- Discount object + audit-tracked commercial changes
+- Charges split (dev, maintenance, registration, tax, legal)
 
-## User management (Iter10)
-- Admin **and** Management can invite, edit, reset passwords, deactivate, and reactivate users.
-- Management is guarded from touching Admin accounts and from promoting anyone to Admin.
-- `DELETE /users/{id}` is a soft delete (`is_active=false`). `POST /users/{id}/reactivate` flips it back.
-- Every logged-in user has a `/profile` page: hero + avatar upload + personal-details form + change-password with live rule checklist. Site Managers also see a "My Projects" sidebar there.
-- Sidebar user card is now a link to `/profile`.
+### P2
+- Bank reconciliation (statement import + auto-match)
+- Customer communication timeline (calls, emails, WhatsApp, meetings)
+- Full site procurement flow (quotation → PO → payment → receipt)
+- 2FA on Profile page
+- Server.py modularization (~2800 lines) into feature routers
+
+## Env config
+`backend/.env`:
+```
+ADMIN_EMAIL=deb@agrocorp.co.in
+ADMIN_TEMP_PASSWORD=Admin@Agro@2026#
+```
+Code defaults match. Kubernetes-safe.
 
 ## Deployment
-Preview: https://property-ops-60.preview.emergentagent.com · Production: https://property-ops-60.emergent.host (redeploy needed to publish this rework).
+- Preview: https://property-ops-60.preview.emergentagent.com
+- Production: https://property-ops-60.emergent.host (redeploy needed to publish Wave 1)
 
-## Backlog / next priorities
-- P1: Notification enhancement — email approval buttons for Management
-- P2: Push notifications for pending approvals
-- P2: Modularize `server.py` (~2300 lines) into APIRouter modules
-- P2: Multi-language / locale toggle
+## Testing baseline
+- iter13 (Wave 1): `/app/test_reports/iteration_13.json` — **20/20 backend + full frontend smoke PASS**
+- Previous: iter9 (v2 baseline), iter10 (users mgmt), iter11 (lockout), iter12 (self-heal seed)
