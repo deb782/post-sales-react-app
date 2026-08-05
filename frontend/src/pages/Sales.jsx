@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
-import { HandCoins, Search, Ban } from "lucide-react";
+import { HandCoins, Search, Ban, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -167,6 +167,9 @@ export default function Sales() {
                         <Ban className="w-3.5 h-3.5 mr-1" /> Cancel
                       </Button>
                     )}
+                    <Button size="sm" variant="ghost" onClick={() => nav(`/cost-sheet/${u.unit_id}`)} data-testid={`cost-sheet-${u.plot_number}`}>
+                      <FileText className="w-3.5 h-3.5 mr-1" /> Cost Sheet
+                    </Button>
                     <Button size="sm" variant="ghost" onClick={() => nav(`/crm/${u.unit_id}`)}>View in CRM →</Button>
                   </div>
                 </TableCell>

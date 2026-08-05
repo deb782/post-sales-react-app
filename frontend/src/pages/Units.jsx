@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api, API_BASE, apiError } from "@/lib/api";
 import { useAuth, can, canSetup } from "@/lib/auth";
 import { useProjectFilter } from "@/components/ProjectFilter";
@@ -59,6 +60,7 @@ const fmt = (n = 0) => "₹" + Math.round(n).toLocaleString("en-IN");
 
 export default function Units() {
   const { user } = useAuth();
+  const nav = useNavigate();
   const { ProjectFilter, projectId, projects } = useProjectFilter();
   const [units, setUnits] = useState([]);
   const [templates, setTemplates] = useState([]);
@@ -366,6 +368,9 @@ export default function Units() {
                 <TableCell className="text-stone-600">{u.owner_name || "—"}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center gap-1 justify-end">
+                    <Button size="icon" variant="ghost" onClick={() => nav(`/cost-sheet/${u.unit_id}`)} title="View cost sheet" data-testid={`cost-sheet-btn-${u.plot_number}`}>
+                      <FileText className="w-3.5 h-3.5" />
+                    </Button>
                     {can(user, "super_admin", "sales_rep", "sales_head", "process_admin") && u.status === "available" && (
                       <Button size="sm" onClick={() => openSell(u)} className="bg-emerald-900 hover:bg-emerald-800" data-testid={`sell-unit-${u.plot_number}`}>
                         <HandCoins className="w-3.5 h-3.5 mr-1" /> Mark Sold

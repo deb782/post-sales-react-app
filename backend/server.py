@@ -143,6 +143,17 @@ ROLE_LABELS = {
     "accounts_rep": "Accounts Representative",
     "site_supervisor": "Site Supervisor",
 }
+
+# Legacy unit-status values from pre-Wave 1 (statuses were:
+#   available / sold / crm_pending / crm_scheduled / accounts_tracking / cancelled)
+# Auto-migrated by the /api/admin/migrate-legacy-statuses super-admin endpoint.
+_LEGACY_UNIT_STATUS_MAP = {
+    "sold": "sale_confirmed",
+    "crm_pending": "sale_confirmed",
+    "crm_scheduled": "post_sales_active",
+    "accounts_tracking": "post_sales_active",
+    # cancelled → cancelled (unchanged, no mapping needed)
+}
 # Convenience sets used by RBAC checks
 ADMIN_TIER = ("super_admin", "process_admin")
 HEADS = ("super_admin", "process_admin", "crm_head", "sales_head", "accounts_head")
@@ -1977,6 +1988,49 @@ def _add_days(base_iso: str, days: int) -> str:
     return (d + timedelta(days=days)).date().isoformat()
 
 
+@api.get("/units/{unit_id}/preview-schedule")
+async def preview_schedule(unit_id: str,
+                           template_id: Optional[str] = None,
+                           booking_date: Optional[str] = None,
+                           user: User = Depends(get_current_user)):
+    """Compute a payment schedule for a unit + plan WITHOUT persisting it.
+
+    Used by the Cost Sheet Preview page so Sales can share a printable
+    quote with prospects before the plot is booked.
+    """
+    unit = await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
+    if not unit:
+        raise HTTPException(404, "Unit not found")
+    tpl_id = template_id or unit.get("payment_plan_template_id")
+    if not tpl_id:
+        raise HTTPException(400, "Provide template_id or link one to the unit")
+    tpl = await db.payment_templates.find_one({"template_id": tpl_id}, {"_id": 0})
+    if not tpl:
+        raise HTTPException(404, "Payment plan template not found")
+    start_iso = (booking_date or unit.get("sold_at") or now())[:10]
+    schedule = []
+    for stage in tpl.get("stages", []):
+        stage_d = stage if isinstance(stage, dict) else stage.model_dump()
+        trig = stage_d.get("trigger", "days_from_booking")
+        if trig == "notice_of_possession":
+            due = _add_days(start_iso, 365)
+        else:
+            due = _add_days(start_iso, int(stage_d.get("days_from_start", 0) or 0))
+        calc = compute_stage_amount(unit.get("pricing"),
+                                     float(unit.get("total_price", 0) or 0),
+                                     stage_d)
+        schedule.append({
+            "stage_name": stage_d.get("name", ""),
+            "trigger": trig,
+            "days_from_start": stage_d.get("days_from_start", 0),
+            "due_date": due,
+            "amount": calc["amount"],
+            "breakdown": calc["breakdown"],
+        })
+    return {"unit": unit, "template": tpl,
+            "booking_date": start_iso, "schedule": schedule}
+
+
 @api.post("/units/{unit_id}/auto-schedule")
 async def auto_schedule(unit_id: str,
                         booking_date: Optional[str] = None,
@@ -2316,6 +2370,28 @@ def _vv_plan_definitions() -> List[dict]:
             ],
         },
     ]
+
+
+@api.post("/admin/migrate-legacy-statuses")
+async def migrate_legacy_statuses(
+        user: User = Depends(require_roles("super_admin"))):
+    """One-time cleanup: rewrite pre-Wave-1 unit statuses to the current set.
+
+    Idempotent — safe to call repeatedly.
+    Preserves the original in `legacy_status_before_migration` for audit.
+    """
+    summary = {}
+    for old, new in _LEGACY_UNIT_STATUS_MAP.items():
+        r = await db.units.update_many(
+            {"status": old},
+            {"$set": {"status": new,
+                      "legacy_status_before_migration": old}})
+        summary[f"{old} -> {new}"] = r.modified_count
+    await audit(user.user_id, "migrate_legacy_statuses", "system",
+                "units", summary)
+    return {"migrated": summary,
+            "total": sum(summary.values())}
+
 
 
 @api.post("/setup/vv-payment-plans")

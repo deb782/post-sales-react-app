@@ -23,6 +23,7 @@ import Sales from "@/pages/Sales";
 import SalesApprovals from "@/pages/SalesApprovals";
 import Cancellations from "@/pages/Cancellations";
 import MaterialRequests from "@/pages/MaterialRequests";
+import CostSheet from "@/pages/CostSheet";
 import CRM from "@/pages/CRM";
 import Tickets from "@/pages/Tickets";
 import Profile from "@/pages/Profile";
@@ -63,6 +64,7 @@ function AppRouter() {
         <Route path="/sales-approvals" element={<Protected roles={["super_admin","sales_head"]}><SalesApprovals /></Protected>} />
         <Route path="/cancellations" element={<Protected roles={["super_admin","process_admin","sales_head","sales_rep","crm_head","post_sales_rep","accounts_head","accounts_rep"]}><Cancellations /></Protected>} />
         <Route path="/material-requests" element={<Protected roles={["super_admin","process_admin","crm_head","site_supervisor"]}><MaterialRequests /></Protected>} />
+        <Route path="/cost-sheet/:unitId" element={<Protected><CostSheet /></Protected>} />
         <Route path="/crm" element={<Protected roles={["super_admin","process_admin","crm_head","post_sales_rep","accounts_head","accounts_rep"]}><CRM /></Protected>} />
         <Route path="/crm/:unitId" element={<Protected roles={["super_admin","process_admin","crm_head","post_sales_rep","accounts_head","accounts_rep"]}><CRM /></Protected>} />
         <Route path="/revenue" element={<Protected roles={["super_admin","process_admin","accounts_head","accounts_rep","crm_head"]}><Revenue /></Protected>} />

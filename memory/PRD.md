@@ -49,6 +49,12 @@ Core rule: Process Admin prepares, Super Admin approves. No one approves their o
   - **VV - Time Linked** — 8 stages across booking → 300 d + NoP; OC1 & OC2 each split 50/50 across two milestones
 - Verified in preview against 256 units of Vacation Village CKM — every plan reconciles to grand_total to the rupee.
 
+## Wave 3 continued — Cost Sheet Preview + legacy status migration (Feb 2026)
+- **`GET /api/units/{id}/preview-schedule?template_id&booking_date`** — non-persistent schedule generator. Returns unit + template + `schedule[]` with per-stage breakdown (bsp/plc/oc1/gst_oc1/oc2/gst_oc2/ifms). Any authenticated user can call it.
+- **`/cost-sheet/:unitId` page** — printable, share-worthy cost sheet + payment schedule side-by-side. Prospect name/phone/email inputs get baked into the print. Plan selector switches the schedule in real time. Booking-date input reprojects due dates. Print / PDF via browser print (A4 portrait, 12mm margins). Cost breakdown shows sub-lines (per-facing PLC, Legal/Club/Maintenance under OC2, IFMS badged refundable) and highlights the Grand Total + net-of-IFMS payable.
+- **Cost Sheet buttons** added on Units listing (icon-only per row) and Sales page (label on sold rows).
+- **`POST /api/admin/migrate-legacy-statuses`** — one-time super-admin endpoint that rewrites pre-Wave-1 unit statuses (`sold`, `crm_pending` → `sale_confirmed`; `crm_scheduled`, `accounts_tracking` → `post_sales_active`). Idempotent; preserves the original under `legacy_status_before_migration`.
+
 ## Backlog (Waves 3–4)
 ### P1
 - Customer document vault (KYC, agreements, receipts)
