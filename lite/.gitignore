@@ -1,0 +1,30 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+env/
+venv/
+.venv/
+
+# Env files
+.env
+.env.local
+.env.*.local
+
+# Node
+node_modules/
+build/
+dist/
+.pnp/
+.pnp.js
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# yarn / npm
+yarn-error.log
+npm-debug.log*

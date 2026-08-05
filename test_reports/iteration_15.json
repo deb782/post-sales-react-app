@@ -1,0 +1,57 @@
+{
+  "summary": "Move-verification for Agrocorp Lite (relocated /app-lite/ -> /app/lite/). Confirmed structure, backend health on :8100, E2E auth+RBAC+project+users+procurement flows, and frontend lint. 11 passed, 2 skipped (skips are expected DB-state: admin pw already rotated by prior smoke; only unit in verify-DB already sold pre-move).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "structure_verification": {
+    "/app/lite/ exists": true,
+    "/app-lite/ removed": true,
+    "backend/server.py": true,
+    "backend/requirements.txt": true,
+    "backend/.env.example": true,
+    "frontend/package.json (valid JSON)": true,
+    "frontend/src/App.js": true,
+    "pages_count_under_frontend_src_pages": 9,
+    "pages_ge_8": true,
+    "README.md": true,
+    "memory/PRD.md": true,
+    "craco '@' alias -> src": true
+  },
+  "backend_verification": {
+    "GET /api/health": "200 {status:ok}",
+    "admin login": "PASS via rotated pw Admin@Verify1 (initial 9999999999 rejected because pre-move smoke already rotated)",
+    "admin relogin after (skipped) change-password": "PASS",
+    "RBAC GET /users unauth": "401 PASS",
+    "RBAC POST /users as post_sales": "403 PASS",
+    "POST /projects (admin)": "PASS",
+    "POST /users x3 (accounts/post_sales/site_manager)": "PASS",
+    "first-login must_reset_password flow for created users": "PASS",
+    "site_manager POST /procurement": "PASS",
+    "admin POST /procurement/{id}/action approve": "PASS",
+    "accounts POST /procurement/{id}/payment": "PASS",
+    "GET /notifications for accounts": "PASS",
+    "POST /units/{unit_id}/sell": "SKIPPED - only unit in verify-DB already sold; pre-move smoke already exercised (5 payment rows + sale_recorded notification present)"
+  },
+  "frontend_verification": {
+    "eslint on /app/lite/frontend/src": "clean - no issues",
+    "package.json valid JSON": true,
+    "craco.config.js alias '@' -> src/": true
+  },
+  "test_report_links": [
+    "/app/lite/tests/test_move_verification.py",
+    "/app/test_reports/pytest/lite_move_verification.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Login response uses 'access_token' (not 'token').",
+    "Procurement API uses nested {subject, items:[{name, quantity, unit, est_cost}]}.",
+    "New projects do not auto-create units; units come only from /units/import."
+  ],
+  "updated_files": ["/app/lite/tests/test_move_verification.py (new)"],
+  "success_rate": {"backend": "100% (11/11 executed passed; 2 skipped are DB-state-driven)", "frontend": "lint 100%"},
+  "test_credentials": "Admin: phone=9999999999 / password=Admin@Verify1 (initial 9999999999/9999999999 no longer works).",
+  "seed_data_creation": "Created 1 project, 3 users, 1 procurement request in DB=agrocorp_lite_verify. Non-destructive.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Lite backend on http://localhost:8100 (DB=agrocorp_lite_verify), separate from main app on :8001. Admin pw is Admin@Verify1. Login returns access_token. Procurement schema requires subject + items[]. To test sell flow, seed units via /units/import first.",
+  "rca of the issue": "N/A - move verification only; no bugs introduced by relocating /app-lite/ to /app/lite/."
+}
