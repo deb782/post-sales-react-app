@@ -36,6 +36,19 @@ Core rule: Process Admin prepares, Super Admin approves. No one approves their o
 - Unknown roles fall back to `site_supervisor` with a warning log.
 - **Redeploy required** to publish this hotfix to prod.
 
+## Wave 3 kickoff — Cost-sheet accurate pricing + plans (Feb 2026)
+- **Unit.pricing** structured block: `bsp`, `plc` (+breakdown), `oc1`, `oc2` (+breakdown for legal/club/maintenance), `ifms`, `gst_rate`, `grand_total`. OC1 = Infrastructure & Development (pre-tax). OC2 = Legal + Club + 2-year Maintenance (pre-tax bundle). IFMS = refundable, non-GST. GST is applied at the payment-plan stage, not baked in.
+- **PlanStage** extended with `bsp_percent`, `plc_percent`, `oc1_percent`, `oc2_percent`, `apply_gst`, `charge_ifms`, and a `trigger` enum (`booking` | `days_from_booking` | `notice_of_possession`). Legacy `percent` still honoured so pre-existing plans keep working.
+- **`compute_stage_amount()`** helper returns per-stage total + itemized breakdown (bsp / plc / oc1 / gst_oc1 / oc2 / gst_oc2 / ifms).
+- **`POST /api/units/{id}/auto-schedule`** generates all installments from a unit's pricing × its linked plan (booking_date optional; defaults to `sold_at`). Deferred stages tied to Notice of Possession are inserted with `deferred_until_nop=true`.
+- **`POST /api/units/vv-import`**: Excel/CSV importer specifically for Vacation Village cost-sheet columns (UNIT NO, EXTENT, Basic Sale Price, East/Hill/Corner PLC, Infra & Dev, Legal, Club, Maintenance, IFMS, Grand Total). Loads formula-computed values (`data_only=True`). Upserts on `(project_id, plot_number)`; skips units that are already sold/booked.
+- **`POST /api/setup/vv-payment-plans`**: idempotent seed for the 4 canonical plans:
+  - **VV - 50/50 Payment Plan** — 10 % booking · 40 % + OC1 at agreement · 50 % + OC2 + IFMS at NoP
+  - **VV - 70/30 Payment Plan (August Offer)** — 10/20/70 with OC1 at agreement, OC2 + IFMS at NoP
+  - **VV - Down Payment Plan** — 10/80 upfront · 100 % PLC + OC1 at 120d · 10 % + OC2 + IFMS at NoP
+  - **VV - Time Linked** — 8 stages across booking → 300 d + NoP; OC1 & OC2 each split 50/50 across two milestones
+- Verified in preview against 256 units of Vacation Village CKM — every plan reconciles to grand_total to the rupee.
+
 ## Backlog (Waves 3–4)
 ### P1
 - Customer document vault (KYC, agreements, receipts)

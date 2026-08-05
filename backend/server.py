@@ -253,6 +253,26 @@ class PLCEntry(BaseModel):
     amount: float = 0
 
 
+class UnitPricing(BaseModel):
+    """Structured cost breakdown per plot (matches Agrocorp cost sheets).
+
+    OC1 (Other Charges 1) is pre-tax; GST is applied at the payment-plan
+    stage level (`apply_gst`).  OC2 (Other Charges 2) is the pre-tax bundle
+    of Legal & Admin + Club Membership + 2-year Advance Maintenance.
+    IFMS is refundable and always non-GST.
+    """
+    model_config = ConfigDict(extra="ignore")
+    bsp: float = 0                 # Basic Sale Price (BSP)
+    plc: float = 0                 # sum of applicable PLCs
+    plc_breakdown: dict = {}       # {east_facing, hill_view, corner, …}
+    oc1: float = 0                 # Infrastructure & development (pre-tax)
+    oc2: float = 0                 # Legal + Club + 2yr Maint (pre-tax bundle)
+    oc2_breakdown: dict = {}       # {legal, club, maintenance, …}
+    ifms: float = 0                # Refundable, no GST — collected with OC2 by default
+    gst_rate: float = 0.18
+    grand_total: float = 0         # cached total: bsp + plc + oc1*(1+g) + oc2*(1+g) + ifms
+
+
 UnitStatus = Literal[
     "available", "on_hold", "temporarily_blocked", "booking_in_progress",
     "booked_pending_sales_approval", "sale_confirmed", "post_sales_active",
@@ -272,6 +292,7 @@ class Unit(BaseModel):
     facing: str = ""  # North / East etc
     plcs: List[PLCEntry] = []
     price: float = 0
+    pricing: Optional[UnitPricing] = None   # Structured cost sheet breakdown
     status: UnitStatus = "available"
     # Sale details (set by Sales role)
     owner_name: Optional[str] = None
@@ -299,6 +320,7 @@ class UnitCreate(BaseModel):
     facing: str = ""
     plcs: List[PLCEntry] = []
     price: float = 0
+    pricing: Optional[UnitPricing] = None
 
 
 class UnitUpdate(BaseModel):
@@ -307,6 +329,7 @@ class UnitUpdate(BaseModel):
     facing: Optional[str] = None
     plcs: Optional[List[PLCEntry]] = None
     price: Optional[float] = None
+    pricing: Optional[UnitPricing] = None
 
 
 class SellUnitRequest(BaseModel):
@@ -319,9 +342,27 @@ class SellUnitRequest(BaseModel):
 
 
 class PlanStage(BaseModel):
+    """One milestone in a payment plan.
+
+    - `percent` is the LEGACY flat percentage applied to `total_price`
+      (retained so pre-Wave 3 plans keep working).
+    - The `*_percent` fields describe what fraction of each cost sheet
+      component is due at this stage. `apply_gst` decides whether GST is
+      layered on top of the OC1/OC2 portion at this stage.
+    - `trigger` = "booking" (day 0), "days_from_booking" (uses
+      `days_from_start`), or "notice_of_possession" (fires when NoP is
+      recorded — see CRM flow).
+    """
     name: str
-    percent: float
+    percent: float = 0                    # legacy: % of total_price
     days_from_start: int = 0
+    trigger: Literal["booking", "days_from_booking", "notice_of_possession"] = "days_from_booking"
+    bsp_percent: float = 0                # % of BSP
+    plc_percent: float = 0                # % of PLC amount
+    oc1_percent: float = 0                # % of OC1 (Infra & Dev, pre-tax)
+    oc2_percent: float = 0                # % of OC2 (Legal+Club+Maint, pre-tax)
+    apply_gst: bool = True                # add GST on OC1/OC2 portions
+    charge_ifms: bool = False             # one-time IFMS collection at this stage
 
 
 class PaymentPlanTemplate(BaseModel):
@@ -1843,9 +1884,25 @@ async def list_templates(user: User = Depends(get_current_user)):
 @api.post("/payment-templates")
 async def create_template(payload: PaymentPlanTemplateCreate,
                           user: User = Depends(require_roles("super_admin", "process_admin"))):
-    total = sum(s.percent for s in payload.stages)
-    if abs(total - 100) > 0.01:
-        raise HTTPException(400, f"Stages must sum to 100% (got {total})")
+    # If the plan uses component-aware fields (bsp/plc/oc), don't enforce the
+    # legacy "stages must sum to 100%" rule — validate per component instead.
+    uses_components = any(
+        max(s.bsp_percent, s.plc_percent, s.oc1_percent, s.oc2_percent) > 0
+        for s in payload.stages)
+    if uses_components:
+        for label, get in (
+            ("BSP", lambda s: s.bsp_percent),
+            ("PLC", lambda s: s.plc_percent),
+            ("OC1", lambda s: s.oc1_percent),
+            ("OC2", lambda s: s.oc2_percent),
+        ):
+            total = sum(get(s) for s in payload.stages)
+            if total > 0 and abs(total - 100) > 0.01:
+                raise HTTPException(400, f"{label} stages must sum to 100% (got {total})")
+    else:
+        total = sum(s.percent for s in payload.stages)
+        if abs(total - 100) > 0.01:
+            raise HTTPException(400, f"Stages must sum to 100% (got {total})")
     t = PaymentPlanTemplate(**payload.model_dump(), created_by=user.user_id)
     await db.payment_templates.insert_one(t.model_dump())
     await audit(user.user_id, "create_template", "payment_template",
@@ -1862,6 +1919,440 @@ async def delete_template(template_id: str,
     await audit(user.user_id, "delete_template", "payment_template",
                 template_id, {})
     return {"ok": True}
+
+
+# ------------------ pricing + component-aware stage amount helpers -------
+def _stage_uses_components(stage: dict) -> bool:
+    return any(stage.get(k, 0) > 0
+               for k in ("bsp_percent", "plc_percent",
+                          "oc1_percent", "oc2_percent")) or stage.get("charge_ifms")
+
+
+def compute_stage_amount(pricing: Optional[dict],
+                          total_price_fallback: float,
+                          stage: dict) -> dict:
+    """Return {amount, breakdown} for one payment-plan stage.
+
+    If the unit has a structured `pricing` block AND the stage uses
+    component percents, we bill each component separately (with GST layered
+    on OC1/OC2 as required). Otherwise we fall back to `percent × total_price`
+    for backward compatibility with pre-Wave 3 data.
+    """
+    if pricing and _stage_uses_components(stage):
+        bsp = float(pricing.get("bsp", 0) or 0)
+        plc = float(pricing.get("plc", 0) or 0)
+        oc1 = float(pricing.get("oc1", 0) or 0)
+        oc2 = float(pricing.get("oc2", 0) or 0)
+        ifms = float(pricing.get("ifms", 0) or 0)
+        g = float(pricing.get("gst_rate", 0.18) or 0)
+        bsp_part = bsp * float(stage.get("bsp_percent", 0)) / 100.0
+        plc_part = plc * float(stage.get("plc_percent", 0)) / 100.0
+        oc1_pre = oc1 * float(stage.get("oc1_percent", 0)) / 100.0
+        oc2_pre = oc2 * float(stage.get("oc2_percent", 0)) / 100.0
+        apply_gst = bool(stage.get("apply_gst", True))
+        oc1_gst = oc1_pre * g if apply_gst else 0
+        oc2_gst = oc2_pre * g if apply_gst else 0
+        ifms_part = ifms if stage.get("charge_ifms") else 0
+        total = bsp_part + plc_part + oc1_pre + oc1_gst + oc2_pre + oc2_gst + ifms_part
+        return {
+            "amount": round(total, 2),
+            "breakdown": {
+                "bsp": round(bsp_part, 2),
+                "plc": round(plc_part, 2),
+                "oc1": round(oc1_pre, 2),
+                "gst_oc1": round(oc1_gst, 2),
+                "oc2": round(oc2_pre, 2),
+                "gst_oc2": round(oc2_gst, 2),
+                "ifms": round(ifms_part, 2),
+            },
+        }
+    # Legacy fallback
+    pct = float(stage.get("percent", 0) or 0)
+    amt = round(total_price_fallback * pct / 100.0, 2)
+    return {"amount": amt, "breakdown": {"legacy_percent": pct, "amount": amt}}
+
+
+def _add_days(base_iso: str, days: int) -> str:
+    d = datetime.fromisoformat(base_iso.replace("Z", "+00:00"))
+    return (d + timedelta(days=days)).date().isoformat()
+
+
+@api.post("/units/{unit_id}/auto-schedule")
+async def auto_schedule(unit_id: str,
+                        booking_date: Optional[str] = None,
+                        user: User = Depends(require_roles(
+                            "super_admin", "process_admin",
+                            "crm_head", "post_sales_rep"))):
+    """Generate installments from a unit's pricing + linked payment plan.
+
+    - Uses the component-aware compute (BSP/PLC/OC1/OC2/IFMS + GST) when the
+      unit has a `pricing` block and the plan uses component percents.
+    - Falls back to legacy `percent × total_price` when either is missing.
+    - Stages triggered by "notice_of_possession" are inserted with the
+      revised_due_date left blank; CRM sets the actual date when NoP is issued.
+    """
+    unit = await db.units.find_one({"unit_id": unit_id}, {"_id": 0})
+    if not unit:
+        raise HTTPException(404, "Unit not found")
+    tpl_id = unit.get("payment_plan_template_id")
+    if not tpl_id:
+        raise HTTPException(400, "Unit has no payment plan template linked")
+    tpl = await db.payment_templates.find_one({"template_id": tpl_id}, {"_id": 0})
+    if not tpl:
+        raise HTTPException(404, "Payment plan template not found")
+
+    start_iso = (booking_date or unit.get("sold_at") or now())[:10]
+    # Wipe any prior schedule
+    await db.installments.delete_many({"unit_id": unit_id})
+    docs = []
+    for stage in tpl.get("stages", []):
+        stage_d = stage if isinstance(stage, dict) else stage.model_dump()
+        trig = stage_d.get("trigger", "days_from_booking")
+        if trig == "notice_of_possession":
+            # Deferred — placeholder ISO date = 1y from booking; CRM revises.
+            due = _add_days(start_iso, 365)
+            deferred = True
+        else:
+            days = int(stage_d.get("days_from_start", 0) or 0)
+            due = _add_days(start_iso, days)
+            deferred = False
+        calc = compute_stage_amount(unit.get("pricing"),
+                                     float(unit.get("total_price", 0) or 0),
+                                     stage_d)
+        inst = Installment(
+            unit_id=unit_id, project_id=unit["project_id"],
+            stage_name=stage_d.get("name", ""),
+            percent=float(stage_d.get("percent", 0) or 0),
+            amount=calc["amount"], due_date=due,
+        )
+        d = inst.model_dump()
+        d["breakdown"] = calc["breakdown"]
+        d["trigger"] = trig
+        d["deferred_until_nop"] = deferred
+        docs.append(d)
+    if docs:
+        await db.installments.insert_many(docs)
+    # Strip Mongo's injected _id from the response payload
+    for d in docs:
+        d.pop("_id", None)
+    await db.units.update_one(
+        {"unit_id": unit_id},
+        {"$set": {"status": "post_sales_active" if docs else "sale_confirmed",
+                  "schedule_created_by": user.user_id,
+                  "schedule_created_at": now()}})
+    await audit(user.user_id, "auto_schedule", "unit", unit_id,
+                {"count": len(docs), "template_id": tpl_id})
+    return {"created": len(docs), "installments": docs}
+
+
+# ------------------ VV cost-sheet Excel import + plan seed ---------------
+def _num(v) -> float:
+    if v is None or v == "":
+        return 0.0
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+@api.post("/units/vv-import")
+async def vv_import(project_id: str = Form(...),
+                    file: UploadFile = File(...),
+                    user: User = Depends(require_roles("super_admin", "process_admin"))):
+    """Import Vacation Village-style cost sheets.
+
+    Expected columns (case-insensitive, whitespace-tolerant):
+      UNIT NO. | EXTENT (SFT) | Basic Sale Price |
+      East Facing PLC | Hill View PLC | CORNER PLC |
+      Infrastructure & development charges | GST 18% |
+      Legal and Administrative Charges | GST 18% |
+      Club membership | GST 18% |
+      Advance maintenance Charges for 2 years | GST 18% |
+      Interest Free Maintenance Security (12months) | Grand Total
+
+    OC1 = Infrastructure & Development (pre-tax).
+    OC2 = Legal + Club + 2-year Maintenance bundle (pre-tax, GST applied at
+          the payment-plan stage).
+    IFMS is stored separately (no GST, refundable).
+    """
+    proj = await db.projects.find_one({"project_id": project_id}, {"_id": 0})
+    if not proj:
+        raise HTTPException(404, "Project not found")
+
+    raw = await file.read()
+    fname = (file.filename or "").lower()
+    if fname.endswith(".csv"):
+        text = raw.decode("utf-8-sig", errors="replace")
+        rows = [row for row in csv.reader(io.StringIO(text))]
+    else:
+        wb = load_workbook(io.BytesIO(raw), data_only=True)
+        ws = wb.active
+        rows = [[c for c in r] for r in ws.iter_rows(values_only=True)]
+    header_idx = None
+    for i, row in enumerate(rows[:10]):
+        joined = " ".join(str(c or "").lower() for c in row)
+        if "unit" in joined and "basic sale price" in joined:
+            header_idx = i
+            break
+    if header_idx is None:
+        raise HTTPException(
+            400,
+            "Header row not found. Expected a header containing 'UNIT NO.' "
+            "and 'Basic Sale Price'.")
+    header = [str(c or "").strip() for c in rows[header_idx]]
+
+    # Build a resolver that maps logical fields to column indices, allowing
+    # duplicate "GST 18%" columns interpreted positionally.
+    idx_of = {}
+
+    def find(name_lower: str, occurrence: int = 0) -> Optional[int]:
+        count = 0
+        for i, h in enumerate(header):
+            if h.strip().lower() == name_lower:
+                if count == occurrence:
+                    return i
+                count += 1
+        return None
+
+    # Fuzzy match for varied whitespace / ampersand
+    def fuzzy(fragment: str) -> Optional[int]:
+        for i, h in enumerate(header):
+            if fragment.lower() in h.strip().lower():
+                return i
+        return None
+
+    idx_of["unit_no"] = fuzzy("unit no") or fuzzy("unit")
+    idx_of["extent"] = fuzzy("extent")
+    idx_of["bsp"] = fuzzy("basic sale")
+    idx_of["east_plc"] = fuzzy("east facing")
+    idx_of["hill_plc"] = fuzzy("hill view")
+    idx_of["corner_plc"] = fuzzy("corner")
+    idx_of["oc1_infra"] = fuzzy("infrastructure")
+    idx_of["legal"] = fuzzy("legal")
+    idx_of["club"] = fuzzy("club")
+    idx_of["maint"] = fuzzy("advance maintenance")
+    idx_of["ifms"] = fuzzy("interest free maintenance") or fuzzy("ifms")
+    idx_of["grand_total"] = fuzzy("grand total")
+
+    # The four "GST 18%" columns follow OC1, Legal, Club, Maint respectively.
+    gst_positions = [i for i, h in enumerate(header)
+                     if h.strip().lower().startswith("gst")]
+    # Sort so we pair with each preceding charge column by position.
+
+    inserted, errors = 0, []
+    for line_no, row in enumerate(rows[header_idx + 1:], start=header_idx + 2):
+        if not any(row):
+            continue
+        try:
+            unit_no = row[idx_of["unit_no"]] if idx_of["unit_no"] is not None else None
+            if unit_no is None or str(unit_no).strip() == "":
+                continue
+            plot_number = str(unit_no).strip()
+            if plot_number.endswith(".0"):
+                plot_number = plot_number[:-2]
+            size = row[idx_of["extent"]] if idx_of["extent"] is not None else None
+            size_str = f"{size} sqft" if size else ""
+
+            bsp = _num(row[idx_of["bsp"]] if idx_of["bsp"] is not None else 0)
+            east = _num(row[idx_of["east_plc"]] if idx_of["east_plc"] is not None else 0)
+            hill = _num(row[idx_of["hill_plc"]] if idx_of["hill_plc"] is not None else 0)
+            corner = _num(row[idx_of["corner_plc"]] if idx_of["corner_plc"] is not None else 0)
+            oc1 = _num(row[idx_of["oc1_infra"]] if idx_of["oc1_infra"] is not None else 0)
+            legal = _num(row[idx_of["legal"]] if idx_of["legal"] is not None else 0)
+            club = _num(row[idx_of["club"]] if idx_of["club"] is not None else 0)
+            maint = _num(row[idx_of["maint"]] if idx_of["maint"] is not None else 0)
+            ifms = _num(row[idx_of["ifms"]] if idx_of["ifms"] is not None else 0)
+            grand = _num(row[idx_of["grand_total"]] if idx_of["grand_total"] is not None else 0)
+
+            plc_total = east + hill + corner
+            plc_breakdown = {}
+            plcs_list: List[PLCEntry] = []
+            if east:
+                plc_breakdown["east_facing"] = east
+                plcs_list.append(PLCEntry(label="East Facing", amount=east))
+            if hill:
+                plc_breakdown["hill_view"] = hill
+                plcs_list.append(PLCEntry(label="Hill View", amount=hill))
+            if corner:
+                plc_breakdown["corner"] = corner
+                plcs_list.append(PLCEntry(label="Corner", amount=corner))
+
+            oc2 = legal + club + maint  # pre-tax bundle
+            pricing = UnitPricing(
+                bsp=bsp, plc=plc_total, plc_breakdown=plc_breakdown,
+                oc1=oc1, oc2=oc2,
+                oc2_breakdown={"legal": legal, "club": club, "maintenance": maint},
+                ifms=ifms, gst_rate=0.18,
+                grand_total=grand or (bsp + plc_total + oc1 * 1.18 + oc2 * 1.18 + ifms),
+            )
+            facing = "East" if east else ("Corner" if corner else "")
+
+            # Upsert on (project_id, plot_number)
+            existing = await db.units.find_one(
+                {"project_id": project_id, "plot_number": plot_number},
+                {"_id": 0, "unit_id": 1, "status": 1})
+            unit_doc = {
+                "project_id": project_id,
+                "plot_number": plot_number,
+                "size": size_str,
+                "facing": facing,
+                "plcs": [p.model_dump() for p in plcs_list],
+                "price": bsp + plc_total,
+                "total_price": grand or (bsp + plc_total + oc1 * 1.18 + oc2 * 1.18 + ifms),
+                "pricing": pricing.model_dump(),
+            }
+            if existing:
+                if existing.get("status", "available") == "available":
+                    await db.units.update_one(
+                        {"unit_id": existing["unit_id"]}, {"$set": unit_doc})
+                else:
+                    errors.append({"row": line_no, "plot": plot_number,
+                                   "error": f"skipped — status is {existing.get('status')}"})
+                    continue
+            else:
+                new = Unit(**unit_doc)
+                await db.units.insert_one(new.model_dump())
+            inserted += 1
+        except Exception as e:
+            errors.append({"row": line_no, "error": str(e)})
+
+    await audit(user.user_id, "vv_import", "project", project_id,
+                {"inserted": inserted, "errors": len(errors)})
+    return {"inserted": inserted, "errors": errors,
+            "columns_matched": {k: (header[v] if v is not None else None)
+                                 for k, v in idx_of.items()}}
+
+
+# ------------------ VV payment plan seed (4 named plans) -----------------
+def _vv_plan_definitions() -> List[dict]:
+    """The 4 Vacation Village CKM payment plans, verbatim from cost sheets."""
+    return [
+        {
+            "name": "VV - 50/50 Payment Plan",
+            "description": "10% at booking · 40% + Other Charges 1 at agreement · 50% + Other Charges 2 at possession",
+            "stages": [
+                {"name": "On the date of booking", "trigger": "booking",
+                 "days_from_start": 0,
+                 "bsp_percent": 10, "plc_percent": 10, "apply_gst": False},
+                {"name": "On Agreement to Sell", "trigger": "days_from_booking",
+                 "days_from_start": 30,
+                 "bsp_percent": 40, "plc_percent": 40,
+                 "oc1_percent": 100, "apply_gst": True},
+                {"name": "On Notice of Possession", "trigger": "notice_of_possession",
+                 "days_from_start": 365,
+                 "bsp_percent": 50, "plc_percent": 50,
+                 "oc2_percent": 100, "apply_gst": True, "charge_ifms": True},
+            ],
+        },
+        {
+            "name": "VV - 70/30 Payment Plan (August Offer)",
+            "description": "10% at booking · 20% + Other Charges 1 at agreement · 70% + Other Charges 2 at possession",
+            "stages": [
+                {"name": "On the date of booking", "trigger": "booking",
+                 "days_from_start": 0,
+                 "bsp_percent": 10, "plc_percent": 10, "apply_gst": False},
+                {"name": "On Agreement to Sell", "trigger": "days_from_booking",
+                 "days_from_start": 30,
+                 "bsp_percent": 20, "plc_percent": 20,
+                 "oc1_percent": 100, "apply_gst": True},
+                {"name": "On Notice of Possession", "trigger": "notice_of_possession",
+                 "days_from_start": 365,
+                 "bsp_percent": 70, "plc_percent": 70,
+                 "oc2_percent": 100, "apply_gst": True, "charge_ifms": True},
+            ],
+        },
+        {
+            "name": "VV - Down Payment Plan",
+            "description": "10% booking · 80% agreement · 100% PLC + Other Charges 1 at 120d · 10% + Other Charges 2 at possession",
+            "stages": [
+                {"name": "On the date of booking", "trigger": "booking",
+                 "days_from_start": 0,
+                 "bsp_percent": 10, "plc_percent": 0, "apply_gst": False},
+                {"name": "On Agreement to Sell", "trigger": "days_from_booking",
+                 "days_from_start": 30,
+                 "bsp_percent": 80, "plc_percent": 0, "apply_gst": False},
+                {"name": "Instalment 2", "trigger": "days_from_booking",
+                 "days_from_start": 120,
+                 "bsp_percent": 0, "plc_percent": 100,
+                 "oc1_percent": 100, "apply_gst": True},
+                {"name": "On Notice of Possession", "trigger": "notice_of_possession",
+                 "days_from_start": 365,
+                 "bsp_percent": 10, "plc_percent": 0,
+                 "oc2_percent": 100, "apply_gst": True, "charge_ifms": True},
+            ],
+        },
+        {
+            "name": "VV - Time Linked",
+            "description": "10/20/20/10/10/10/10/10 across booking → 300d + possession; OC1 & OC2 split 50/50",
+            "stages": [
+                {"name": "On the date of booking", "trigger": "booking",
+                 "days_from_start": 0,
+                 "bsp_percent": 10, "plc_percent": 10, "apply_gst": False},
+                {"name": "On Agreement to Sell", "trigger": "days_from_booking",
+                 "days_from_start": 30,
+                 "bsp_percent": 20, "plc_percent": 20, "apply_gst": False},
+                {"name": "Instalment 3", "trigger": "days_from_booking",
+                 "days_from_start": 60,
+                 "bsp_percent": 20, "plc_percent": 20,
+                 "oc1_percent": 50, "apply_gst": True},
+                {"name": "Instalment 4", "trigger": "days_from_booking",
+                 "days_from_start": 120,
+                 "bsp_percent": 10, "plc_percent": 10,
+                 "oc2_percent": 50, "apply_gst": True},
+                {"name": "Instalment 5", "trigger": "days_from_booking",
+                 "days_from_start": 180,
+                 "bsp_percent": 10, "plc_percent": 10,
+                 "oc1_percent": 50, "apply_gst": True},
+                {"name": "Instalment 6", "trigger": "days_from_booking",
+                 "days_from_start": 240,
+                 "bsp_percent": 10, "plc_percent": 10, "apply_gst": False},
+                {"name": "Instalment 7", "trigger": "days_from_booking",
+                 "days_from_start": 300,
+                 "bsp_percent": 10, "plc_percent": 10, "apply_gst": False},
+                {"name": "On Notice of Possession", "trigger": "notice_of_possession",
+                 "days_from_start": 365,
+                 "bsp_percent": 10, "plc_percent": 10,
+                 "oc2_percent": 50, "apply_gst": True, "charge_ifms": True},
+            ],
+        },
+    ]
+
+
+@api.post("/setup/vv-payment-plans")
+async def seed_vv_plans(
+        replace_existing: bool = False,
+        user: User = Depends(require_roles("super_admin", "process_admin"))):
+    """Idempotently create the 4 canonical VV CKM payment plans.
+
+    Set `replace_existing=true` to overwrite the stages of plans that already
+    exist with the same name (keeps their template_id so existing sales
+    aren't orphaned).
+    """
+    created, updated, skipped = [], [], []
+    for defn in _vv_plan_definitions():
+        existing = await db.payment_templates.find_one(
+            {"name": defn["name"]}, {"_id": 0})
+        if existing:
+            if replace_existing:
+                upd = {"description": defn["description"],
+                       "stages": defn["stages"]}
+                await db.payment_templates.update_one(
+                    {"template_id": existing["template_id"]},
+                    {"$set": upd})
+                updated.append(existing["template_id"])
+            else:
+                skipped.append(existing["template_id"])
+            continue
+        tpl = PaymentPlanTemplate(name=defn["name"],
+                                   description=defn["description"],
+                                   stages=[PlanStage(**s) for s in defn["stages"]],
+                                   created_by=user.user_id)
+        await db.payment_templates.insert_one(tpl.model_dump())
+        created.append(tpl.template_id)
+    await audit(user.user_id, "seed_vv_plans", "payment_template", "",
+                {"created": len(created), "updated": len(updated),
+                 "skipped": len(skipped)})
+    return {"created": created, "updated": updated, "skipped": skipped}
 
 
 # ---------------------------------------- installments (CRM schedule) ----
